@@ -9,6 +9,16 @@ import { useState, useRef, useEffect } from "react";
 ─────────────────────────────────────────────────────────────── */
 interface WIQUser { name: string; email?: string; photo?: string | null }
 
+// Admin emails — anyone else gets "Customer" role
+const ADMIN_EMAILS = ["admin@wateriq.io", "khushchadha@", "khush"];
+
+function getRole(user: WIQUser): string {
+  const email = (user.email ?? "").toLowerCase();
+  const name  = (user.name  ?? "").toLowerCase();
+  const isAdmin = ADMIN_EMAILS.some(a => email.includes(a) || name.includes(a));
+  return isAdmin ? "System Admin" : "Customer";
+}
+
 function useGoogleUser(): WIQUser {
   try {
     const raw = localStorage.getItem("wiq_user");
@@ -83,7 +93,7 @@ export default function TopBar() {
             }
             <div className="topbar__user-info">
               <span className="topbar__user-name">Hi, {user.name.split(" ")[0]}</span>
-              <span className="topbar__user-role">System Admin</span>
+              <span className="topbar__user-role">{getRole(user)}</span>
             </div>
             <span className="topbar__chevron" style={{ transform: open ? "rotate(180deg)" : "none" }}>▾</span>
           </button>
@@ -99,7 +109,7 @@ export default function TopBar() {
                   }
                   <div>
                     <div className="topbar__user-name" style={{ fontSize: 13 }}>{user.name}</div>
-                    <div className="topbar__user-role">{item.sub}</div>
+                    <div className="topbar__user-role">{getRole(user)} · {item.sub}</div>
                   </div>
                 </div>
               );
