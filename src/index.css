@@ -8,9 +8,9 @@
   --bg:             #020C18;
   --bg-deep:        #010810;
   --bg-surface:     rgba(4, 14, 28, 0.82);
-  --bg-glass:       rgba(4, 14, 30, 0.52);
-  --bg-glass-hover: rgba(6, 18, 38, 0.65);
-  --bg-inset:       rgba(1, 5, 12, 0.60);
+  --bg-glass:       rgba(5, 18, 38, 0.72);
+  --bg-glass-hover: rgba(7, 22, 46, 0.82);
+  --bg-inset:       rgba(2, 8, 20, 0.75);
 
   /* Accent palette — cold electric blue/cyan */
   --cyan:           #00D4FF;
@@ -31,14 +31,14 @@
   --text-bright:    #EAF6FF;
 
   /* Borders */
-  --border:         rgba(0, 212, 255, 0.08);
-  --border-mid:     rgba(0, 212, 255, 0.16);
+  --border:         rgba(0, 212, 255, 0.14);
+  --border-mid:     rgba(0, 212, 255, 0.26);
   --border-bright:  rgba(0, 212, 255, 0.35);
 
   /* Glass card system */
-  --glass-blur:     22px;
-  --glass-shadow:   0 4px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,212,255,0.06);
-  --glass-shadow-hover: 0 8px 48px rgba(0,0,0,0.7), 0 0 40px rgba(0,212,255,0.10), 0 0 0 1px rgba(0,212,255,0.18);
+  --glass-blur:     16px;
+  --glass-shadow:   0 8px 32px rgba(0,0,0,0.65), 0 0 0 1px rgba(0,212,255,0.12), inset 0 1px 0 rgba(255,255,255,0.06);
+  --glass-shadow-hover: 0 12px 48px rgba(0,0,0,0.75), 0 0 48px rgba(0,212,255,0.14), 0 0 0 1px rgba(0,212,255,0.28), inset 0 1px 0 rgba(255,255,255,0.08);
 
   /* Spacing */
   --r-sm:   8px;
@@ -68,34 +68,48 @@ body {
   background-color: var(--bg);
   overflow-x: hidden;
 
-  /* ── THUNDER STRIPE BACKGROUND ──
-     Thick bold diagonal bands like the reference — wide
-     alternating stripes clearly visible through glass cards.
-     Blue instead of gold. */
-  background-image:
-    repeating-linear-gradient(
-      -52deg,
-      #020C18              0px,
-      #020C18             50px,
-      #041830             50px,
-      #041830             72px,
-      #020C18             72px,
-      #020C18            118px,
-      rgba(0,70,150,0.22) 118px,
-      rgba(0,70,150,0.22) 138px
-    ),
-    repeating-linear-gradient(
-      -52deg,
-      transparent           0px,
-      transparent           88px,
-      rgba(0,55,120,0.10)   88px,
-      rgba(0,55,120,0.10)   98px
-    ),
-    radial-gradient(ellipse 80% 55% at 12% 4%,  rgba(0,50,130,0.65) 0%, transparent 65%),
-    radial-gradient(ellipse 60% 50% at 90% 92%, rgba(0,35,105,0.55) 0%, transparent 60%),
-    radial-gradient(ellipse 45% 40% at 52% 50%, rgba(0,40,110,0.28) 0%, transparent 55%);
+  /* ── THUNDER / FRACTAL LIGHTNING BACKGROUND ──
+     Mimics the massive bold diagonal lightning texture from the reference.
+     Large alternating bands with jagged cuts — blue instead of gold. 
+     Multiple overlapping stripe layers create the chaotic lightning feel. */
 
-  background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+  background-image:
+    /* Primary massive stripes — thick dark/bright alternation */
+    repeating-linear-gradient(
+      -55deg,
+      #010A16   0px,   #010A16  48px,
+      #03162E  48px,   #03162E  62px,
+      #010A16  62px,   #010A16 102px,
+      #04213E 102px,   #04213E 112px,
+      #010A16 112px,   #010A16 144px,
+      rgba(0,90,180,0.28) 144px, rgba(0,90,180,0.28) 158px,
+      #010A16 158px,   #010A16 188px,
+      #051E38 188px,   #051E38 198px
+    ),
+    /* Secondary offset stripes — creates jagged cut effect */
+    repeating-linear-gradient(
+      -55deg,
+      transparent          0px,  transparent         36px,
+      rgba(0,60,140,0.18) 36px,  rgba(0,60,140,0.18) 44px,
+      transparent         44px,  transparent         96px,
+      rgba(0,45,120,0.12) 96px,  rgba(0,45,120,0.12) 102px,
+      transparent        102px,  transparent        160px,
+      rgba(0,80,160,0.15) 160px, rgba(0,80,160,0.15) 170px
+    ),
+    /* Tertiary fine cuts — small jagged breaks */
+    repeating-linear-gradient(
+      -52deg,
+      transparent           0px, transparent          22px,
+      rgba(0,130,220,0.06) 22px, rgba(0,130,220,0.06) 24px,
+      transparent          24px, transparent          58px,
+      rgba(0,100,200,0.04) 58px, rgba(0,100,200,0.04) 60px
+    ),
+    /* Depth atmosphere */
+    radial-gradient(ellipse 75% 55% at 10%  3%, rgba(0, 45,120,0.70) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 88% 94%, rgba(0, 30, 95,0.60) 0%, transparent 58%),
+    radial-gradient(ellipse 40% 35% at 50% 50%, rgba(0, 38,108,0.30) 0%, transparent 55%);
+
+  background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
   background-attachment: fixed;
 }
 
@@ -132,7 +146,7 @@ body::after {
 .g-card {
   background: var(--bg-glass);
   border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-xl);
   box-shadow: var(--glass-shadow);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
@@ -175,7 +189,7 @@ body::after {
 
 /* Solid hero card variant */
 .g-card-solid {
-  background: rgba(4, 14, 28, 0.94);
+  background: rgba(3, 12, 26, 0.92);
   border: 1px solid var(--border-mid);
   border-radius: var(--r-xl);
   box-shadow: var(--glass-shadow-hover);
@@ -198,7 +212,7 @@ body::after {
   gap: 8px;
   padding: 9px 14px;
   border-bottom: 1px solid var(--border);
-  background: rgba(1, 6, 14, 0.55);
+  background: rgba(1, 6, 14, 0.70);
   flex-shrink: 0;
 }
 .g-card-header-label {
