@@ -151,7 +151,7 @@ const NAV_CSS = `
   /* Diagonal stripe texture on nav — matches body */
   .bnav::before {
     content: ''; position: absolute; inset: 0;
-    background-image: repeating-linear-gradient(-48deg, transparent 0px, transparent 24px, rgba(0,140,220,0.025) 24px, rgba(0,140,220,0.025) 25px);
+    background-image: repeating-linear-gradient(-52deg, transparent 0px, transparent 50px, rgba(0,70,150,0.12) 50px, rgba(0,70,150,0.12) 58px, transparent 58px, transparent 118px, rgba(0,55,120,0.07) 118px, rgba(0,55,120,0.07) 126px);
     pointer-events: none;
   }
   .bnav__scan {
