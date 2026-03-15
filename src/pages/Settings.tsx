@@ -516,20 +516,13 @@ function SectionSystem({ status, batchSize, setBatchSize, onStatusUpdate, backen
       <div className="s-block">
         <div className="s-label">BATCH SIZE <span style={{ color: "var(--text-dim)", fontWeight: 400, fontSize: 9 }}>BATCH_SIZE constant</span></div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {["−", "+"].map((ch, idx) => (
-            <button key={ch} onClick={() => setBatchSize(Math.max(3, Math.min(10, batchSize + (idx === 1 ? 1 : -1))))}
-              disabled={(idx === 0 ? batchSize <= 3 : batchSize >= 10) || phase !== "IDLE"}
-              style={{
-                width: 30, height: 30, borderRadius: "var(--r-sm)",
-                border: "1px solid var(--border-mid)", background: "rgba(0,212,255,0.06)",
-                color: "var(--cyan)", fontSize: 16, fontWeight: 700, cursor: "pointer",
-                outline: "none", opacity: ((idx === 0 ? batchSize <= 3 : batchSize >= 10) || phase !== "IDLE") ? 0.3 : 1,
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>{ch}</button>
-            ).reduce((acc: JSX.Element[], el, idx) => {
-              if (idx === 1) return [...acc, <span key="val" className="t-mono" style={{ fontSize: 20, color: "var(--cyan)", minWidth: 24, textAlign: "center" }}>{batchSize}</span>, el];
-              return [...acc, el];
-            }, [])}
+          <button onClick={() => setBatchSize(Math.max(3, batchSize - 1))}
+            disabled={batchSize <= 3 || phase !== "IDLE"}
+            style={{ width: 30, height: 30, borderRadius: "var(--r-sm)", border: "1px solid var(--border-mid)", background: "rgba(0,212,255,0.06)", color: "var(--cyan)", fontSize: 16, fontWeight: 700, cursor: "pointer", outline: "none", opacity: (batchSize <= 3 || phase !== "IDLE") ? 0.3 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+          <span className="t-mono" style={{ fontSize: 20, color: "var(--cyan)", minWidth: 24, textAlign: "center" }}>{batchSize}</span>
+          <button onClick={() => setBatchSize(Math.min(10, batchSize + 1))}
+            disabled={batchSize >= 10 || phase !== "IDLE"}
+            style={{ width: 30, height: 30, borderRadius: "var(--r-sm)", border: "1px solid var(--border-mid)", background: "rgba(0,212,255,0.06)", color: "var(--cyan)", fontSize: 16, fontWeight: 700, cursor: "pointer", outline: "none", opacity: (batchSize >= 10 || phase !== "IDLE") ? 0.3 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
           <span style={{ fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--f-mono)" }}>readings / batch</span>
         </div>
         <div style={{ fontSize: 10, color: "var(--text-secondary)", marginTop: 6, fontFamily: "var(--f-heading)" }}>
