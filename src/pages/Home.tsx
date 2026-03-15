@@ -142,7 +142,7 @@ function SensorStrip({ pts }: { pts: SensorPt[] }) {
     { l: "Data pts", v: (pts.length * 47).toLocaleString(), unit: "", color: "var(--text-primary)", ok: true,               desc: "Buffer" },
   ];
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, borderRadius: "var(--r-lg)", overflow: "hidden", border: "1px solid var(--border)", background: "var(--border)" }}>
+    <div className="kpi-strip" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, borderRadius: "var(--r-lg)", overflow: "hidden", border: "1px solid var(--border)", background: "var(--border)" }}>
       {kpis.map((k, i) => (
         <div key={k.l} style={{ padding: "12px 14px", background: "var(--bg-glass)", backdropFilter: "blur(18px)", position: "relative", transition: "background 0.2s" }}>
           {/* Top accent */}
@@ -529,7 +529,7 @@ export default function Home() {
       </div>
 
       {/* ── Main grid ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "224px 1fr 224px", gap: 12 }}>
+      <div className="grid-home" style={{ display: "grid", gridTemplateColumns: "224px 1fr 224px", gap: 12 }}>
 
         {/* LEFT COLUMN */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -555,7 +555,7 @@ export default function Home() {
           </Card>
 
           {/* Confidence + Fingerprint side-by-side */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="center-sub-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Card title="Sensor Confidence" accent="var(--cyan)">
               <ConfidencePanel conf={pred?.confidence ?? null} />
             </Card>
@@ -577,21 +577,7 @@ export default function Home() {
       </div>
 
       {/* ── Responsive overrides ── */}
-      <style>{`
-        @media (max-width: 1100px) {
-          .page > div:last-of-type {
-            grid-template-columns: 1fr 1fr !important;
-          }
-        }
-        @media (max-width: 700px) {
-          .page > div:last-of-type {
-            grid-template-columns: 1fr !important;
-          }
-          .page > div:nth-of-type(2) > div {
-            grid-template-columns: repeat(2, 1fr) !important;
-          }
-        }
-      `}</style>
+
     </div>
   );
 }

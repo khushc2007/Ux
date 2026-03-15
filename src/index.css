@@ -404,3 +404,55 @@ body::after {
 @media (max-width: 767px) {
   .grid-home { grid-template-columns: 1fr; }
 }
+
+/* ═══════════════════════════════════════════════
+   MOBILE RESPONSIVENESS — GLOBAL
+═══════════════════════════════════════════════ */
+
+/* Touch targets */
+@media (max-width: 768px) {
+  button, a { min-height: 40px; }
+
+  /* Larger text on small screens */
+  .g-card-header-label { font-size: 9px; }
+
+  /* Full-width cards stack */
+  .grid-home { grid-template-columns: 1fr !important; }
+
+  /* Page padding tighter */
+  .page { padding: 10px 10px 20px; }
+
+  /* Hero card wraps */
+  .g-card-solid { padding: 14px 14px !important; }
+
+  /* KPI strip — 2x2 on mobile */
+  .kpi-strip { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Center column sub-grid — 1 col on mobile */
+  .center-sub-grid { grid-template-columns: 1fr !important; }
+
+  /* Badge smaller */
+  .badge { font-size: 8px; padding: 2px 6px; }
+
+  /* Coming soon adjusts */
+  .coming-soon__title { font-size: 15px; }
+}
+
+/* Tablet — 2 col */
+@media (min-width: 768px) and (max-width: 1099px) {
+  .grid-home { grid-template-columns: 1fr 1fr !important; }
+  .page { padding: 14px 14px 22px; }
+}
+
+/* Safe area for notched phones */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  #root { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom)); }
+  .bnav { padding-bottom: env(safe-area-inset-bottom); height: calc(var(--nav-h) + env(safe-area-inset-bottom)); }
+}
+
+/* Prevent text overflow on small screens */
+* { word-break: break-word; }
+.t-mono, .t-display { word-break: normal; }
+
+/* Touch scroll */
+.g-card { -webkit-overflow-scrolling: touch; }
