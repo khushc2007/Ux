@@ -1,15 +1,27 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./layout/Layout";
 import Home from "./pages/Home";
 import Settings from "./pages/Settings";
 import ComingSoon from "./pages/ComingSoon";
 import Preloader from "./components/Preloader";
+import { startSimulator, stopSimulator } from "./lib/dataSimulator";
+import { startAggregator, stopAggregator } from "./lib/aggregator";
 import "./index.css";
 
 export default function App() {
   const [loaded, setLoaded] = useState(false);
   const handleComplete = useCallback(() => setLoaded(true), []);
+
+  // Start the shared data stream once on app mount
+  useEffect(() => {
+    startSimulator();
+    startAggregator();
+    return () => {
+      stopSimulator();
+      stopAggregator();
+    };
+  }, []);
 
   return (
     <>

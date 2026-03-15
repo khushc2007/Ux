@@ -1,40 +1,14 @@
 import { useState, useRef, useEffect } from "react";
-
-/* ── Google-style user context ──────────────────────────────────
-   In a real app this would come from Firebase Auth / Google OAuth.
-   Here we simulate it: reads from localStorage key "wiq_user"
-   or falls back to a default. You can set it by calling:
-     localStorage.setItem("wiq_user", JSON.stringify({ name: "Your Name", email: "you@gmail.com", photo: null }))
-   The TopBar will display whatever name is stored.
-─────────────────────────────────────────────────────────────── */
-interface WIQUser { name: string; email?: string; photo?: string | null }
-
-// Admin emails — anyone else gets "Customer" role
-const ADMIN_EMAILS = ["admin@wateriq.io", "khushchadha@", "khush"];
-
-function getRole(user: WIQUser): string {
-  const email = (user.email ?? "").toLowerCase();
-  const name  = (user.name  ?? "").toLowerCase();
-  const isAdmin = ADMIN_EMAILS.some(a => email.includes(a) || name.includes(a));
-  return isAdmin ? "System Admin" : "Customer";
-}
-
-function useGoogleUser(): WIQUser {
-  try {
-    const raw = localStorage.getItem("wiq_user");
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return { name: "Khush Chadha", email: "admin@wateriq.io" };
-}
+import { useUser } from "../hooks/useUser";
 
 function initials(name: string) {
   return name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
 }
 
 export default function TopBar() {
-  const user = useGoogleUser();
+  const { user, loading, signOut } = useUser();
   const [open, setOpen] = useState(false);
-  const [time, setTime] = useState(new Date());
+  const [time, setTime]  = useState(new Date());
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,18 +17,23 @@ export default function TopBar() {
   }, []);
 
   useEffect(() => {
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
 
+  const roleLabel = user.role === "admin" ? "System Admin" : "Customer";
+  const firstName = user.name.split(" ")[0];
+
   const menuItems = [
-    { icon: "◈", label: `Hi, ${user.name.split(" ")[0]}!`, sub: user.email ?? "Signed in", header: true },
+    { icon: "◈", label: `Hi, ${firstName}!`, sub: user.email || "Signed in", header: true },
     null,
-    { icon: "◉", label: "Profile", sub: "Account details" },
-    { icon: "◌", label: "Preferences", sub: "Theme & display" },
+    { icon: "◉", label: "Profile",      sub: "Account details" },
+    { icon: "◌", label: "Preferences",  sub: "Theme & display" },
     { icon: "◷", label: "Session Logs", sub: "Activity history" },
-    { icon: "⌗", label: "API Keys", sub: "Manage tokens" },
+    { icon: "⌗", label: "API Keys",     sub: "Manage tokens" },
     null,
     { icon: "⏻", label: "Sign Out", sub: "End session", danger: true },
   ];
@@ -63,6 +42,7 @@ export default function TopBar() {
     <>
       <style>{TOPBAR_CSS}</style>
       <header className="topbar">
+
         {/* Logo */}
         <div className="topbar__logo">
           <div className="topbar__logo-mark">
@@ -86,14 +66,28 @@ export default function TopBar() {
 
         {/* User dropdown */}
         <div className="topbar__right" ref={ref}>
-          <button className="topbar__user-btn" onClick={() => setOpen(o => !o)} aria-expanded={open}>
+          <button
+            className="topbar__user-btn"
+            onClick={() => setOpen(o => !o)}
+            aria-expanded={open}
+            disabled={loading}
+          >
             {user.photo
-              ? <img src={user.photo} className="topbar__avatar topbar__avatar--img" alt={user.name} />
-              : <div className="topbar__avatar">{initials(user.name)}</div>
+              ? <img
+                  src={user.photo}
+                  className="topbar__avatar topbar__avatar--img"
+                  alt={user.name}
+                  referrerPolicy="no-referrer"
+                />
+              : <div className="topbar__avatar">
+                  {loading ? "…" : initials(user.name)}
+                </div>
             }
             <div className="topbar__user-info">
-              <span className="topbar__user-name">Hi, {user.name.split(" ")[0]}</span>
-              <span className="topbar__user-role">{getRole(user)}</span>
+              <span className="topbar__user-name">
+                {loading ? "Loading…" : `Hi, ${firstName}`}
+              </span>
+              <span className="topbar__user-role">{roleLabel}</span>
             </div>
             <span className="topbar__chevron" style={{ transform: open ? "rotate(180deg)" : "none" }}>▾</span>
           </button>
@@ -101,22 +95,35 @@ export default function TopBar() {
           <div className={`topbar__dropdown ${open ? "topbar__dropdown--open" : ""}`} role="menu">
             {menuItems.map((item, i) => {
               if (item === null) return <div key={i} className="topbar__dd-divider" />;
+
               if (item.header) return (
                 <div key={i} className="topbar__dd-header">
                   {user.photo
-                    ? <img src={user.photo} className="topbar__avatar topbar__avatar--lg topbar__avatar--img" alt={user.name} />
+                    ? <img
+                        src={user.photo}
+                        referrerPolicy="no-referrer"
+                        className="topbar__avatar topbar__avatar--lg topbar__avatar--img"
+                        alt={user.name}
+                      />
                     : <div className="topbar__avatar topbar__avatar--lg">{initials(user.name)}</div>
                   }
                   <div>
                     <div className="topbar__user-name" style={{ fontSize: 13 }}>{user.name}</div>
-                    <div className="topbar__user-role">{getRole(user)} · {item.sub}</div>
+                    <div className="topbar__user-role">{roleLabel} · {item.sub}</div>
                   </div>
                 </div>
               );
+
               return (
-                <button key={item.label} role="menuitem"
+                <button
+                  key={item.label}
+                  role="menuitem"
                   className={`topbar__dd-item ${item.danger ? "topbar__dd-item--danger" : ""}`}
-                  onClick={() => setOpen(false)}>
+                  onClick={() => {
+                    setOpen(false);
+                    if (item.danger) signOut();
+                  }}
+                >
                   <span className="topbar__dd-item-icon">{item.icon}</span>
                   <div className="topbar__dd-item-text">
                     <span className="topbar__dd-item-label">{item.label}</span>
@@ -148,7 +155,6 @@ const TOPBAR_CSS = `
     pointer-events: none;
   }
 
-  /* Logo */
   .topbar__logo { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
   .topbar__logo-mark {
     display: flex; align-items: center; justify-content: center;
@@ -162,7 +168,6 @@ const TOPBAR_CSS = `
   }
   .topbar__ver { font-size: 8px !important; }
 
-  /* Center clock */
   .topbar__center {
     display: flex; flex-direction: column; align-items: center; gap: 0; flex-shrink: 0;
   }
@@ -175,7 +180,6 @@ const TOPBAR_CSS = `
   }
   @media (max-width: 480px) { .topbar__center { display: none; } }
 
-  /* User */
   .topbar__right { position: relative; flex-shrink: 0; }
   .topbar__user-btn {
     display: flex; align-items: center; gap: 7px;
@@ -184,7 +188,8 @@ const TOPBAR_CSS = `
     cursor: pointer; transition: all 0.22s ease;
     backdrop-filter: blur(12px); outline: none;
   }
-  .topbar__user-btn:hover { border-color: var(--border-mid); background: rgba(6,18,38,0.75); }
+  .topbar__user-btn:hover:not(:disabled) { border-color: var(--border-mid); background: rgba(6,18,38,0.75); }
+  .topbar__user-btn:disabled { opacity: 0.6; cursor: default; }
 
   .topbar__avatar {
     width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
@@ -213,7 +218,6 @@ const TOPBAR_CSS = `
     .topbar__user-btn { padding: 4px 6px; gap: 0; }
   }
 
-  /* Dropdown */
   .topbar__dropdown {
     position: absolute; top: calc(100% + 8px); right: 0;
     width: min(260px, 90vw);
