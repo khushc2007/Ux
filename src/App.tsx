@@ -5,6 +5,7 @@ import Home from "./pages/Home";
 import Settings from "./pages/Settings";
 import ComingSoon from "./pages/ComingSoon";
 import Dashboard from "./pages/Dashboard";
+import GreywaterViz from "./pages/GreywaterViz";
 import Preloader from "./components/Preloader";
 import { startSimulator, stopSimulator } from "./lib/dataSimulator";
 import { startAggregator, stopAggregator } from "./lib/aggregator";
@@ -33,7 +34,7 @@ export default function App() {
             <Route index element={<Navigate to="/home" replace />} />
             <Route path="/home"      element={<Home />} />
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/chamber"   element={<ComingSoon page="Chamber"    icon="⬡" sub="3D greywater treatment visualization" />} />
+            <Route path="/chamber"   element={<GreywaterViz />} />
             <Route path="/history"   element={<ComingSoon page="History"    icon="◷" sub="Session logs & analytics" />} />
             <Route path="/settings"  element={<Settings />} />
             <Route path="*"          element={<Navigate to="/home" replace />} />
