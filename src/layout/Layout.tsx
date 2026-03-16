@@ -1,28 +1,15 @@
 import { Outlet } from "react-router-dom";
-import BottomNavigation from "../components/BottomNavigation";
+import TopBar from "../components/TopBar";
+import BottomNav from "../components/BottomNav";
 
 export default function Layout() {
   return (
-    <div style={styles.root}>
-      <main style={styles.main}>
+    <>
+      <TopBar />
+      <main>
         <Outlet />
       </main>
-      <BottomNavigation />
-    </div>
+      <BottomNav />
+    </>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  root: {
-    display: "flex",
-    flexDirection: "column",
-    minHeight: "100vh",
-    background: "#020617",
-    color: "#ecfdf5",
-  },
-  main: {
-    flex: 1,
-    overflowY: "auto",
-    paddingBottom: 72,
-  },
-};
