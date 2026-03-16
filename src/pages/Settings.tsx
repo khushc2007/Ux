@@ -1,1354 +1,787 @@
-import { useState, useEffect, useRef, useCallback } from "react";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-type Phase = "IDLE" | "COLLECTING" | "ANALYZED" | "TRANSFERRING_MAIN" | "POST_FILTRATION" | "COMPLETE";
-type Env   = "Development" | "Staging" | "Production";
-type Stage = "pre_lamella" | "post_lamella";
-type Section = "system" | "intelligence" | "sensors" | "tank" | "alerts" | "account";
+import React, { useState, useCallback } from "react";
+import { useBackendConnectivity } from "../hooks/useBackendConnectivity";
+import SystemStatus from "../components/SystemStatus";
 
-interface SysStatus {
-  phase: Phase; collected: number; active: boolean; stage: Stage;
-  latencyMs?: number; online?: boolean;
-}
-interface Prediction {
-  bracket?: string; reusable?: boolean; suggestedTank?: string;
-  wqi?: { score: number; interpretation: string };
-  confidence?: {
-    score: number; level: string; recommendation: string;
-    phTurbidityAgreement: number; phTdsAgreement: number; turbidityTdsAgreement: number;
-    disagreementFlags?: string[];
-  };
-  flatline?: { anyFlatlined: boolean; failsafeTriggered: boolean; ph: boolean; turbidity: boolean; tds: boolean };
-  recalibration?: {
-    triggered: boolean; reason: string | null;
-    correctedTurbidity: number | null; originalTurbidity: number | null; disagreementScore: number;
-  };
-  cycleFingerprint?: {
-    cycleId: string; durationMs: number; phSlope: number; turbiditySlope: number; tdsSlope: number;
-    anomalyScore: number; anomalyFlags: string[];
-  };
-  stageAware?: { stage: string; note: string };
-}
-interface Fingerprint {
-  cycleId: string; durationMs: number; phSlope: number; turbiditySlope: number; tdsSlope: number;
-  anomalyScore: number; anomalyFlags: string[];
-}
-interface AlertEntry { ts: number; type: string; value: string; }
-interface Thresholds {
-  flatlineWindow: number; flatlineEpsilon: number;
-  recalThreshold: number; correctionFactor: number;
-}
-interface AlertConfig {
-  wqiBelow: number; confidenceBelow: number; anomalyAbove: number; flatline: boolean;
-  inApp: boolean; browser: boolean; vibration: boolean;
+/* ═══════════════════════════════════════════════════════════════
+   WATERIQ — SETTINGS PAGE  v2.0
+   Full-featured settings with export, calibration, thresholds,
+   session control, display preferences, and diagnostics.
+═══════════════════════════════════════════════════════════════ */
+
+// ─── TYPES ────────────────────────────────────────────────────
+type Mode = "live" | "simulation";
+type Tab = "system" | "thresholds" | "display" | "session" | "diagnostics" | "about";
+
+interface SensorThresholds {
+  phMin: number;
+  phMax: number;
+  turbidityF1: number;
+  turbidityF2: number;
+  turbidityF3: number;
+  turbidityF4: number;
+  tdsReusable: number;
+  tdsSevere: number;
+  orpMin: number;
+  nh3Max: number;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-const DEFAULT_URL = "https://backend-update-1.onrender.com";
-const THRESHOLDS_DEFAULT: Thresholds = {
-  flatlineWindow: 4, flatlineEpsilon: 0.01, recalThreshold: 0.35, correctionFactor: 0.88,
-};
-const ALERTS_DEFAULT: AlertConfig = {
-  wqiBelow: 50, confidenceBelow: 0.70, anomalyAbove: 0.75, flatline: true,
-  inApp: true, browser: false, vibration: false,
-};
-const ADMIN_EMAILS = ["admin@wateriq.io", "khushchadha", "khush"];
-const SECTIONS: { id: Section; icon: string; label: string }[] = [
-  { id: "system",       icon: "◈", label: "System"       },
-  { id: "intelligence", icon: "⬡", label: "Intelligence"  },
-  { id: "sensors",      icon: "◉", label: "Sensors"       },
-  { id: "tank",         icon: "⬢", label: "Tank & Cycle"  },
-  { id: "alerts",       icon: "◬", label: "Alerts"        },
-  { id: "account",      icon: "◎", label: "Account"       },
-];
-const PHASE_COLORS: Record<Phase, string> = {
-  IDLE:             "var(--text-secondary)",
-  COLLECTING:       "var(--cyan)",
-  ANALYZED:         "var(--emerald)",
-  TRANSFERRING_MAIN:"var(--amber)",
-  POST_FILTRATION:  "#c084fc",
-  COMPLETE:         "var(--emerald)",
-};
-const PHASE_BG: Record<Phase, string> = {
-  IDLE:             "rgba(74,122,152,0.12)",
-  COLLECTING:       "rgba(0,212,255,0.10)",
-  ANALYZED:         "rgba(0,255,178,0.10)",
-  TRANSFERRING_MAIN:"rgba(255,176,32,0.10)",
-  POST_FILTRATION:  "rgba(192,132,252,0.10)",
-  COMPLETE:         "rgba(0,255,178,0.10)",
+interface DisplayPrefs {
+  showOilLayer: boolean;
+  showSludge: boolean;
+  showDriftRing: boolean;
+  showSparklines: boolean;
+  showPhaseTimeline: boolean;
+  animationSpeed: number; // 0.5–2.0
+  particleDensity: number; // 25–150 %
+  cameraFOV: number; // 30–70
+}
+
+interface SessionConfig {
+  samplesRequired: number;
+  autoExportOnComplete: boolean;
+  alertOnBracketChange: boolean;
+  cycleTimeoutSeconds: number;
+  logRetentionCycles: number;
+}
+
+interface CalibrationOffsets {
+  ph: number;
+  turbidity: number;
+  tds: number;
+  orp: number;
+  nh3: number;
+}
+
+// ─── DEFAULT VALUES ───────────────────────────────────────────
+const DEFAULT_THRESHOLDS: SensorThresholds = {
+  phMin: 6.5, phMax: 8.5,
+  turbidityF1: 2, turbidityF2: 4, turbidityF3: 8, turbidityF4: 15,
+  tdsReusable: 500, tdsSevere: 800,
+  orpMin: 100, nh3Max: 1.0,
 };
 
-function getRole(email: string, name: string) {
-  const e = email.toLowerCase(), n = name.toLowerCase();
-  return ADMIN_EMAILS.some(a => e.includes(a) || n.includes(a)) ? "ADMIN" : "CUSTOMER";
-}
-function useWIQUser() {
+const DEFAULT_DISPLAY: DisplayPrefs = {
+  showOilLayer: true, showSludge: true, showDriftRing: false,
+  showSparklines: true, showPhaseTimeline: true,
+  animationSpeed: 1.0, particleDensity: 100, cameraFOV: 40,
+};
+
+const DEFAULT_SESSION: SessionConfig = {
+  samplesRequired: 10,
+  autoExportOnComplete: false,
+  alertOnBracketChange: true,
+  cycleTimeoutSeconds: 120,
+  logRetentionCycles: 20,
+};
+
+const DEFAULT_CALIB: CalibrationOffsets = { ph: 0, turbidity: 0, tds: 0, orp: 0, nh3: 0 };
+
+// ─── STORAGE HELPERS ──────────────────────────────────────────
+const STORAGE_KEY = "wateriq_settings_v2";
+function loadSettings() {
   try {
-    const raw = localStorage.getItem("wiq_user");
-    if (raw) return JSON.parse(raw) as { name: string; email?: string; photo?: string };
-  } catch {}
-  return { name: "Khush Chadha", email: "admin@wateriq.io", photo: null };
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
 }
-function wqiColor(s: number) {
-  if (s >= 80) return "var(--emerald)";
-  if (s >= 65) return "var(--cyan)";
-  if (s >= 50) return "var(--amber)";
-  return "var(--red)";
-}
-function agreementColor(v: number) {
-  if (v >= 0.85) return "var(--emerald)";
-  if (v >= 0.70) return "var(--amber)";
-  if (v >= 0.50) return "#f97316";
-  return "var(--red)";
+function saveSettings(data: object) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch { /* noop */ }
 }
 
-// ─── Hold-to-Confirm Button ───────────────────────────────────────────────────
-function HoldButton({ label, color = "red", onConfirm, disabled = false }: {
-  label: string; color?: "red" | "cyan" | "amber"; onConfirm: () => void; disabled?: boolean;
-}) {
-  const [progress, setProgress] = useState(0);
-  const rafRef = useRef<number | null>(null);
-  const startRef = useRef<number | null>(null);
-  const HOLD_MS = 2000;
-  const c = color === "cyan" ? "var(--cyan)" : color === "amber" ? "var(--amber)" : "var(--red)";
-
-  function startHold() {
-    startRef.current = Date.now();
-    function tick() {
-      const p = Math.min(100, ((Date.now() - (startRef.current ?? Date.now())) / HOLD_MS) * 100);
-      setProgress(p);
-      if (p >= 100) { onConfirm(); setProgress(0); return; }
-      rafRef.current = requestAnimationFrame(tick);
-    }
-    rafRef.current = requestAnimationFrame(tick);
-  }
-  function cancelHold() {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    setProgress(0);
-  }
-
-  const borderCol = color === "cyan" ? "rgba(0,212,255,0.35)" : color === "amber" ? "rgba(255,176,32,0.35)" : "rgba(255,69,96,0.35)";
-  const bgCol     = color === "cyan" ? "rgba(0,212,255,0.08)" : color === "amber" ? "rgba(255,176,32,0.08)" : "rgba(255,69,96,0.08)";
-
-  return (
-    <button style={{
-      position: "relative", overflow: "hidden",
-      padding: "8px 18px", borderRadius: "var(--r-md)",
-      border: `1px solid ${borderCol}`, background: bgCol,
-      color: c, fontFamily: "var(--f-heading)", fontSize: 11, fontWeight: 700,
-      letterSpacing: "0.08em", textTransform: "uppercase", cursor: disabled ? "not-allowed" : "pointer",
-      outline: "none", opacity: disabled ? 0.4 : 1, minHeight: 36,
-    }}
-      onMouseDown={disabled ? undefined : startHold}
-      onMouseUp={disabled ? undefined : cancelHold}
-      onMouseLeave={cancelHold}
-      onTouchStart={disabled ? undefined : startHold}
-      onTouchEnd={disabled ? undefined : cancelHold}
-      disabled={disabled}
-    >
-      <span style={{ position: "relative", zIndex: 1 }}>{progress > 0 ? `HOLD ${Math.round(progress)}%` : label}</span>
-      <span style={{
-        position: "absolute", inset: 0,
-        background: `linear-gradient(90deg, transparent, ${c})`,
-        opacity: progress / 500,
-        transform: `scaleX(${progress / 100})`,
-        transformOrigin: "left",
-      }} />
-    </button>
-  );
-}
-
-// ─── Sparkline ────────────────────────────────────────────────────────────────
-function Sparkline({ values, color }: { values: number[]; color: string }) {
-  if (values.length < 2) return null;
-  const min = Math.min(...values), max = Math.max(...values), range = max - min || 1;
-  const W = 80, H = 24;
-  const pts = values.map((v, i) => `${(i / (values.length - 1)) * W},${H - ((v - min) / range) * H}`).join(" ");
-  return (
-    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeOpacity="0.75" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-// ─── Tank Mini Diagram (sensors section) ─────────────────────────────────────
-function TankMiniDiagram({ activeStage }: { activeStage: Stage }) {
-  return (
-    <svg viewBox="0 0 160 200" width="100%" style={{ maxWidth: 160, display: "block" }}>
-      <rect x="30" y="10" width="100" height="180" rx="4" fill="none" stroke="rgba(0,212,255,0.15)" strokeWidth="1.5" />
-      <text x="80" y="8" textAnchor="middle" fill="rgba(0,212,255,0.5)" fontSize="7" fontFamily="Rajdhani">WATER IN</text>
-      <rect x="30" y="15" width="100" height="60" fill="rgba(0,90,180,0.08)" />
-      <text x="80" y="25" textAnchor="middle" fill="rgba(0,130,200,0.6)" fontSize="6" fontFamily="Rajdhani">EC CHAMBER</text>
-      {[35, 44, 53, 62].map((y, i) => (
-        <line key={i} x1="32" y1={y} x2="128" y2={y} stroke={i % 2 === 0 ? "#3a9eff" : "#1a6aaa"} strokeWidth="2" strokeOpacity="0.5" />
-      ))}
-      <rect x="30" y="78" width="100" height="10" fill="rgba(255,176,32,0.07)" />
-      <line x1="32" y1="83" x2="128" y2="83" stroke="rgba(255,176,32,0.5)" strokeWidth="2.5" strokeDasharray="4 3" />
-      <text x="135" y="86" fill="rgba(255,176,32,0.7)" fontSize="6" fontFamily="Rajdhani">GATE</text>
-      {/* Sensor pod */}
-      <rect x="30" y="92" width="100" height="16"
-        fill={activeStage === "post_lamella" ? "rgba(0,212,255,0.12)" : "rgba(0,212,255,0.04)"}
-        stroke={activeStage === "post_lamella" ? "rgba(0,212,255,0.55)" : "rgba(0,212,255,0.18)"}
-        strokeWidth="1" rx="1" />
-      <text x="80" y="103" textAnchor="middle"
-        fill={activeStage === "post_lamella" ? "var(--cyan)" : "rgba(0,212,255,0.5)"} fontSize="7" fontFamily="Rajdhani">
-        SENSOR POD {activeStage === "post_lamella" ? "← HERE" : ""}
-      </text>
-      {/* Pre-lamella indicator */}
-      {activeStage === "pre_lamella" && (
-        <rect x="30" y="106" width="100" height="6" fill="rgba(0,212,255,0.12)" stroke="rgba(0,212,255,0.55)" strokeWidth="1" rx="1" />
-      )}
-      <rect x="30" y="112" width="100" height="30" fill="rgba(0,255,178,0.04)" />
-      <line x1="30" y1="142" x2="80" y2="112" stroke="rgba(0,255,178,0.35)" strokeWidth="1.5" />
-      <line x1="130" y1="142" x2="80" y2="112" stroke="rgba(0,255,178,0.35)" strokeWidth="1.5" />
-      <text x="80" y="130" textAnchor="middle" fill="rgba(0,255,178,0.5)" fontSize="6" fontFamily="Rajdhani">LAMELLA</text>
-      <rect x="30" y="150" width="100" height="36" fill="rgba(0,40,100,0.15)" />
-      <line x1="32" y1="166" x2="128" y2="166" stroke="rgba(255,255,255,0.08)" strokeWidth="1" strokeDasharray="3 3" />
-      <text x="80" y="161" textAnchor="middle" fill="rgba(0,212,255,0.35)" fontSize="6" fontFamily="Rajdhani">CLEAN</text>
-      <text x="80" y="176" textAnchor="middle" fill="rgba(74,122,152,0.5)" fontSize="6" fontFamily="Rajdhani">SLUDGE</text>
-      <circle cx="31" cy="178" r="3" fill="none" stroke="rgba(74,122,152,0.4)" strokeWidth="1" />
-    </svg>
-  );
-}
-
-// ─── Tank Full Diagram (tank section) ────────────────────────────────────────
-function TankDiagram({ gateOpen, wqiScore, phase }: { gateOpen: boolean; wqiScore: number | null; phase: string }) {
-  return (
-    <svg viewBox="0 0 180 340" width="100%" style={{ maxWidth: 220, display: "block", margin: "0 auto" }}>
-      <rect x="35" y="14" width="110" height="312" rx="6" fill="none" stroke="rgba(0,212,255,0.18)" strokeWidth="1.5" />
-      <text x="90" y="10" textAnchor="middle" fill="rgba(0,212,255,0.7)" fontSize="7" fontFamily="Rajdhani" fontWeight="600">WATER IN ↓</text>
-      {/* Propeller */}
-      <rect x="35" y="16" width="110" height="28" fill="rgba(0,60,140,0.08)" />
-      <line x1="40" y1="30" x2="140" y2="30" stroke="rgba(0,130,220,0.25)" strokeWidth="1" strokeDasharray="5 3" />
-      <text x="90" y="28" textAnchor="middle" fill="rgba(0,150,220,0.55)" fontSize="6" fontFamily="Rajdhani">PROPELLER ZONE</text>
-      {/* EC */}
-      <rect x="35" y="46" width="110" height="90" fill="rgba(0,70,160,0.08)" />
-      <text x="90" y="58" textAnchor="middle" fill="rgba(0,130,200,0.65)" fontSize="7" fontFamily="Rajdhani" fontWeight="600">EC CHAMBER</text>
-      {[65, 74, 83, 92, 101, 110].map((y, i) => (
-        <g key={y}>
-          <line x1="37" y1={y} x2="143" y2={y} stroke={i % 2 === 0 ? "rgba(80,160,255,0.55)" : "rgba(40,100,200,0.45)"} strokeWidth="2" />
-          <text x="146" y={y + 4} fill={i % 2 === 0 ? "rgba(80,160,255,0.55)" : "rgba(40,100,200,0.4)"} fontSize="5" fontFamily="JetBrains Mono">{i % 2 === 0 ? "+" : "−"}</text>
-          {[50, 64, 78, 92, 106, 120, 134].map(x => (
-            <circle key={x} cx={x} cy={y} r="1.2" fill="none" stroke="rgba(0,130,220,0.22)" strokeWidth="0.8" />
-          ))}
-        </g>
-      ))}
-      {/* Gate */}
-      <rect x="35" y="140" width="110" height="14" fill="rgba(255,176,32,0.06)" />
-      <line x1="37" y1="147" x2="143" y2="147"
-        stroke={gateOpen ? "rgba(255,176,32,0.25)" : "rgba(255,176,32,0.70)"}
-        strokeWidth="3" strokeDasharray={gateOpen ? "6 4" : undefined} />
-      <text x="90" y="146" textAnchor="middle" fill="rgba(255,176,32,0.75)" fontSize="6" fontFamily="Rajdhani">
-        TIMED GATE — {gateOpen ? "OPEN" : "CLOSED"}
-      </text>
-      {/* Sensor pod */}
-      <rect x="35" y="158" width="110" height="18" fill="rgba(0,212,255,0.10)" stroke="rgba(0,212,255,0.50)" strokeWidth="1" rx="2" />
-      <text x="90" y="170" textAnchor="middle" fill="var(--cyan)" fontSize="7" fontFamily="Rajdhani" fontWeight="700">◆ SENSOR POD</text>
-      <text x="150" y="168" fill="rgba(0,212,255,0.45)" fontSize="5" fontFamily="Rajdhani">pH·NTU·TDS</text>
-      {/* Lamella */}
-      <rect x="35" y="180" width="110" height="48" fill="rgba(0,255,178,0.04)" />
-      <line x1="35" y1="228" x2="90" y2="180" stroke="rgba(0,255,178,0.40)" strokeWidth="1.5" />
-      <line x1="145" y1="228" x2="90" y2="180" stroke="rgba(0,255,178,0.40)" strokeWidth="1.5" />
-      <text x="90" y="208" textAnchor="middle" fill="rgba(0,255,178,0.55)" fontSize="6" fontFamily="Rajdhani">LAMELLA</text>
-      <text x="90" y="220" textAnchor="middle" fill="rgba(0,255,178,0.30)" fontSize="5" fontFamily="Rajdhani">V-settle 45°+10%+45°</text>
-      {/* Collection */}
-      <rect x="35" y="232" width="110" height="90" fill="rgba(0,25,70,0.15)" />
-      <line x1="37" y1="275" x2="143" y2="275" stroke="rgba(255,255,255,0.07)" strokeWidth="1" strokeDasharray="3 3" />
-      <text x="90" y="263" textAnchor="middle"
-        fill={wqiScore != null && wqiScore >= 65 ? "rgba(0,212,255,0.55)" : "rgba(0,212,255,0.25)"}
-        fontSize="6" fontFamily="Rajdhani">CLEAN WATER</text>
-      <text x="90" y="290" textAnchor="middle" fill="rgba(74,122,152,0.45)" fontSize="6" fontFamily="Rajdhani">HEAVY SLUDGE</text>
-      <text x="90" y="312" textAnchor="middle" fill="rgba(0,212,255,0.30)" fontSize="7" fontFamily="Rajdhani">COLLECTION ZONE</text>
-      <circle cx="36" cy="308" r="4" fill="none" stroke="rgba(74,122,152,0.45)" strokeWidth="1.2" />
-      <text x="31" y="322" fill="rgba(74,122,152,0.4)" fontSize="5" fontFamily="Rajdhani">plug</text>
-      {/* Phase label */}
-      <text x="90" y="332" textAnchor="middle"
-        fill={PHASE_COLORS[phase as Phase] ?? "var(--text-dim)"}
-        fontSize="6" fontFamily="JetBrains Mono" letterSpacing="0.08em">
-        {phase.replace(/_/g, " ")}
-      </text>
-    </svg>
-  );
-}
-
-// ─── Threshold helpers ────────────────────────────────────────────────────────
-function ThresholdSlider({ label, value, min, max, step, desc, onChange, onReset, warn }: {
-  label: string; value: number; min: number; max: number; step: number;
-  desc: string; onChange: (v: number) => void; onReset: () => void; warn?: boolean;
-}) {
-  const pct = ((value - min) / (max - min)) * 100;
-  return (
-    <div style={{ padding: "10px 0", borderBottom: "1px solid rgba(0,212,255,0.07)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, fontWeight: 600, color: "var(--text-primary)", letterSpacing: "0.04em" }}>{label}</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span className="t-mono" style={{ fontSize: 12, color: warn ? "var(--amber)" : "var(--cyan)" }}>{value}</span>
-          <button className="btn btn-ghost" style={{ fontSize: 8, padding: "2px 7px", minHeight: "unset" }} onClick={onReset}>reset</button>
-        </div>
-      </div>
-      <input type="range" min={min} max={max} step={step} value={value}
-        style={{
-          width: "100%", height: 4, borderRadius: 2, outline: "none", border: "none",
-          cursor: "pointer", appearance: "none", marginTop: 8,
-          background: `linear-gradient(to right, var(--cyan) ${pct}%, rgba(0,212,255,0.15) ${pct}%)`,
-        } as React.CSSProperties}
-        onChange={e => onChange(parseFloat(e.target.value))}
-      />
-      <div style={{ fontSize: 9, color: "var(--text-secondary)", marginTop: 3, fontFamily: "var(--f-heading)", lineHeight: 1.4 }}>{desc}</div>
-      {warn && <div style={{ fontSize: 9, color: "var(--amber)", marginTop: 2, fontFamily: "var(--f-mono)" }}>⚠ Aggressive correction — use with caution</div>}
-    </div>
-  );
-}
-function ThresholdInput({ label, value, step, decimals, desc, onChange, onReset }: {
-  label: string; value: number; step: number; decimals: number;
-  desc: string; onChange: (v: number) => void; onReset: () => void;
-}) {
-  return (
-    <div style={{ padding: "10px 0", borderBottom: "1px solid rgba(0,212,255,0.07)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, fontWeight: 600, color: "var(--text-primary)" }}>{label}</span>
-        <button className="btn btn-ghost" style={{ fontSize: 8, padding: "2px 7px", minHeight: "unset" }} onClick={onReset}>reset</button>
-      </div>
-      <input type="number" step={step} value={value.toFixed(decimals)}
-        onChange={e => onChange(parseFloat(e.target.value))}
-        style={{
-          width: 120, background: "var(--bg-inset)", border: "1px solid rgba(0,212,255,0.18)",
-          borderRadius: "var(--r-md)", padding: "6px 10px",
-          fontFamily: "var(--f-mono)", fontSize: 12, color: "var(--text-primary)", outline: "none",
-        }}
-      />
-      <div style={{ fontSize: 9, color: "var(--text-secondary)", marginTop: 4, fontFamily: "var(--f-heading)", lineHeight: 1.4 }}>{desc}</div>
-    </div>
-  );
-}
-
-// ─── Right Rail ───────────────────────────────────────────────────────────────
-function LivePulse({ status, prediction, batchSize, syncing, onSync, lastSync, railFlash }: {
-  status: SysStatus | null; prediction: Prediction | null; batchSize: number;
-  syncing: boolean; onSync: () => void; lastSync: Date | null; railFlash: boolean;
-}) {
-  const phase = (status?.phase ?? "IDLE") as Phase;
-  const wqi   = prediction?.wqi?.score ?? null;
-
-  return (
-    <div style={{
-      position: "sticky", top: 68,
-      background: "var(--bg-glass)", border: `1px solid ${railFlash ? "rgba(0,212,255,0.55)" : "var(--border)"}`,
-      borderRadius: "var(--r-xl)", overflow: "hidden",
-      backdropFilter: "blur(var(--glass-blur))",
-      boxShadow: railFlash ? "var(--glass-shadow), 0 0 24px rgba(0,212,255,0.18)" : "var(--glass-shadow)",
-      transition: "border-color 0.4s ease, box-shadow 0.4s ease",
-    }}>
-      {/* Header */}
-      <div style={{ padding: "10px 12px 8px", borderBottom: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 4 }}>
-        <span style={{ fontFamily: "var(--f-display)", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", color: "var(--text-secondary)" }}>SYSTEM PULSE</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: "var(--f-mono)", fontSize: 9, fontWeight: 600, color: status?.online !== false ? "var(--emerald)" : "var(--red)" }}>
-          <span className="dot" style={{
-            background: status?.online !== false ? "var(--emerald)" : "var(--red)",
-            boxShadow: status?.online !== false ? "0 0 6px var(--emerald)" : "none",
-            animation: status?.online !== false ? "pulseDot 1.6s ease-in-out infinite" : "none",
-          }} />
-          {status?.online !== false ? "RENDER LIVE" : "OFFLINE"}
-          {status?.latencyMs != null && <span style={{ color: "var(--text-dim)", fontSize: 9 }}>&nbsp;{status.latencyMs}ms</span>}
-        </div>
-      </div>
-      {/* Phase */}
-      <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
-        <div className="t-label" style={{ marginBottom: 6 }}>PHASE</div>
-        <div style={{
-          display: "inline-flex", alignItems: "center", padding: "4px 10px",
-          borderRadius: 5, fontFamily: "var(--f-mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-          color: PHASE_COLORS[phase], background: PHASE_BG[phase],
-        }}>{phase.replace(/_/g, " ")}</div>
-      </div>
-      {/* Readings */}
-      <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
-        <div className="t-label" style={{ marginBottom: 6, display: "flex", justifyContent: "space-between" }}>
-          <span>READINGS</span>
-          <span className="t-mono" style={{ color: "var(--cyan)", fontSize: 11 }}>{status?.collected ?? 0} / {batchSize}</span>
-        </div>
-        <div style={{ display: "flex", gap: 3 }}>
-          {Array.from({ length: batchSize }).map((_, i) => (
-            <div key={i} style={{
-              flex: 1, height: 5, borderRadius: 2,
-              background: i < (status?.collected ?? 0) ? "var(--cyan)" : "rgba(0,212,255,0.10)",
-              border: `1px solid ${i < (status?.collected ?? 0) ? "var(--cyan)" : "rgba(0,212,255,0.14)"}`,
-              boxShadow: i < (status?.collected ?? 0) ? "0 0 6px rgba(0,212,255,0.4)" : "none",
-              transition: "background 0.4s ease",
-            }} />
-          ))}
-        </div>
-      </div>
-      {/* WQI */}
-      <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "center" }}>
-        <div className="t-label" style={{ marginBottom: 8 }}>LAST WQI</div>
-        {wqi != null ? (
-          <>
-            <svg width="80" height="50" viewBox="0 0 80 50" style={{ overflow: "visible", display: "block", margin: "0 auto" }}>
-              <path d="M 8 46 A 36 36 0 0 1 72 46" fill="none" stroke="rgba(0,212,255,0.12)" strokeWidth="4" strokeLinecap="round" />
-              <path d="M 8 46 A 36 36 0 0 1 72 46" fill="none" stroke={wqiColor(wqi)} strokeWidth="4" strokeLinecap="round"
-                strokeDasharray={`${(wqi / 100) * 113} 113`} style={{ transition: "stroke-dasharray 0.6s ease" }} />
-              <text x="40" y="44" textAnchor="middle" fill={wqiColor(wqi)} style={{ font: "700 18px 'JetBrains Mono'" }}>{Math.round(wqi)}</text>
-            </svg>
-            <div style={{ fontSize: 9, color: "var(--text-secondary)", marginTop: 2, fontFamily: "var(--f-mono)", letterSpacing: "0.06em" }}>
-              {prediction?.wqi?.interpretation?.toUpperCase()}
-            </div>
-          </>
-        ) : (
-          <div style={{ color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--f-mono)" }}>NO DATA</div>
-        )}
-      </div>
-      {/* Sync */}
-      <div style={{ padding: "10px 12px" }}>
-        <button className="btn btn-ghost" style={{ width: "100%", fontSize: 10, padding: "7px 10px" }} onClick={onSync} disabled={syncing}>
-          {syncing ? "SYNCING…" : "⟳  SYNC NOW"}
-        </button>
-        {lastSync && (
-          <div style={{ fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--f-mono)", marginTop: 6, textAlign: "center" }}>
-            {lastSync.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Section Components ───────────────────────────────────────────────────────
-
-function SectionSystem({ status, batchSize, setBatchSize, onStatusUpdate, backendUrl }: {
-  status: SysStatus | null; batchSize: number; setBatchSize: (n: number) => void;
-  onStatusUpdate: () => void; backendUrl: string;
-}) {
-  const [url, setUrl] = useState(() => localStorage.getItem("wiq_backend_url") ?? DEFAULT_URL);
-  const [env, setEnv] = useState<Env>("Development");
-  const [testResult, setTestResult] = useState<null | { ok: boolean; msg: string }>(null);
-  const [testing, setTesting] = useState(false);
-  const [prodConfirm, setProdConfirm] = useState(false);
-  const [sessionMsg, setSessionMsg] = useState<string | null>(null);
-  const phase = status?.phase ?? "IDLE";
-  const phaseOk = phase === "IDLE" || phase === "COLLECTING";
-
-  async function testConn() {
-    setTesting(true); setTestResult(null);
-    const t0 = Date.now();
-    try {
-      const r = await fetch(`${url}/session/status`);
-      const ms = Date.now() - t0;
-      if (r.ok) {
-        const d = await r.json();
-        setTestResult({ ok: true, msg: `${ms}ms · phase: ${d.phase}` });
-      } else { setTestResult({ ok: false, msg: `HTTP ${r.status}` }); }
-    } catch (e: unknown) { setTestResult({ ok: false, msg: `Network error · ${e instanceof Error ? e.message : String(e)}` }); }
-    setTesting(false);
-  }
-
-  async function doCmd(cmd: "start" | "reset") {
-    try {
-      const r = await fetch(`${url}/${cmd === "start" ? "session/start" : "session/reset"}`, { method: "POST" });
-      const d = await r.json();
-      setSessionMsg(d.message ?? d.phase ?? "OK");
-      onStatusUpdate();
-    } catch { setSessionMsg("Request failed"); }
-    setTimeout(() => setSessionMsg(null), 3000);
-  }
-
-  return (
-    <div>
-      {/* Endpoint */}
-      <div className="s-block">
-        <div className="s-label">BACKEND ENDPOINT</div>
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8,
-          background: "var(--bg-inset)", border: "1px solid rgba(0,212,255,0.18)",
-          borderRadius: "var(--r-md)", padding: "8px 12px",
-        }}>
-          <span style={{ fontFamily: "var(--f-mono)", fontSize: 12, color: "var(--cyan)", flexShrink: 0 }}>$</span>
-          <input type="text" value={url} spellCheck={false}
-            onChange={e => setUrl(e.target.value)}
-            onBlur={() => localStorage.setItem("wiq_backend_url", url)}
-            style={{
-              flex: 1, background: "transparent", border: "none", outline: "none",
-              fontFamily: "var(--f-mono)", fontSize: 11, color: "var(--text-primary)", caretColor: "var(--cyan)",
-            }}
-          />
-        </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button className="btn btn-cyan" style={{ fontSize: 10 }} onClick={testConn} disabled={testing}>
-            {testing ? "TESTING…" : "TEST CONNECTION"}
-          </button>
-          {testResult && (
-            <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: testResult.ok ? "var(--emerald)" : "var(--red)" }}>
-              {testResult.ok ? "✓" : "✗"} {testResult.msg}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Environment */}
-      <div className="s-block">
-        <div className="s-label">DEPLOYMENT ENVIRONMENT</div>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-          {(["Development", "Staging", "Production"] as Env[]).map(e => (
-            <button key={e} onClick={() => { if (e === "Production") setProdConfirm(true); else { setEnv(e); setProdConfirm(false); } }}
-              style={{
-                padding: "6px 14px", borderRadius: "var(--r-md)",
-                border: `1px solid ${env === e ? (e === "Production" ? "rgba(255,176,32,0.55)" : "rgba(0,212,255,0.40)") : "var(--border)"}`,
-                background: env === e ? (e === "Production" ? "rgba(255,176,32,0.10)" : "rgba(0,212,255,0.08)") : "transparent",
-                color: env === e ? (e === "Production" ? "var(--amber)" : "var(--cyan)") : "var(--text-secondary)",
-                fontFamily: "var(--f-heading)", fontSize: 11, fontWeight: 600, cursor: "pointer", outline: "none",
-              }}>{e}</button>
-          ))}
-        </div>
-        {prodConfirm && (
-          <div style={{ marginTop: 8, background: "rgba(255,176,32,0.05)", border: "1px solid rgba(255,176,32,0.18)", borderRadius: "var(--r-md)", padding: "8px 12px" }}>
-            <div style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--amber)" }}>
-              ⚠ You are configuring the live system. Changes affect physical hardware.
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-              <button className="btn btn-ghost" style={{ fontSize: 9 }} onClick={() => { setEnv("Production"); setProdConfirm(false); }}>CONFIRM</button>
-              <button className="btn btn-ghost" style={{ fontSize: 9 }} onClick={() => setProdConfirm(false)}>CANCEL</button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Batch size */}
-      <div className="s-block">
-        <div className="s-label">BATCH SIZE <span style={{ color: "var(--text-dim)", fontWeight: 400, fontSize: 9 }}>BATCH_SIZE constant</span></div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={() => setBatchSize(Math.max(3, batchSize - 1))}
-            disabled={batchSize <= 3 || phase !== "IDLE"}
-            style={{ width: 30, height: 30, borderRadius: "var(--r-sm)", border: "1px solid var(--border-mid)", background: "rgba(0,212,255,0.06)", color: "var(--cyan)", fontSize: 16, fontWeight: 700, cursor: "pointer", outline: "none", opacity: (batchSize <= 3 || phase !== "IDLE") ? 0.3 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
-          <span className="t-mono" style={{ fontSize: 20, color: "var(--cyan)", minWidth: 24, textAlign: "center" }}>{batchSize}</span>
-          <button onClick={() => setBatchSize(Math.min(10, batchSize + 1))}
-            disabled={batchSize >= 10 || phase !== "IDLE"}
-            style={{ width: 30, height: 30, borderRadius: "var(--r-sm)", border: "1px solid var(--border-mid)", background: "rgba(0,212,255,0.06)", color: "var(--cyan)", fontSize: 16, fontWeight: 700, cursor: "pointer", outline: "none", opacity: (batchSize >= 10 || phase !== "IDLE") ? 0.3 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
-          <span style={{ fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--f-mono)" }}>readings / batch</span>
-        </div>
-        <div style={{ fontSize: 10, color: "var(--text-secondary)", marginTop: 6, fontFamily: "var(--f-heading)" }}>
-          Readings required before /analyze-water is permitted. Changing this resets the current session.
-        </div>
-        {phase !== "IDLE" && <div style={{ fontSize: 9, color: "var(--amber)", marginTop: 4, fontFamily: "var(--f-mono)" }}>🔒 Disabled — phase must be IDLE</div>}
-      </div>
-
-      {/* Session controls */}
-      <div className="s-block">
-        <div className="s-label">SESSION CONTROLS</div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <button className="btn btn-ghost" style={{ fontSize: 10 }} disabled={!phaseOk} onClick={() => doCmd("start")}>
-            START NEW SESSION
-          </button>
-          <HoldButton label="⚠ HARD RESET" color="red" disabled={!phaseOk} onConfirm={() => doCmd("reset")} />
-        </div>
-        {sessionMsg && <div style={{ marginTop: 8, fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--cyan)" }}>{sessionMsg}</div>}
-        {!phaseOk && <div style={{ fontSize: 9, color: "var(--text-dim)", marginTop: 4, fontFamily: "var(--f-mono)" }}>Available in IDLE or COLLECTING only</div>}
-      </div>
-    </div>
-  );
-}
-
-function SectionIntelligence({ prediction, fingerprints, thresholds, setThresholds }: {
-  prediction: Prediction | null; fingerprints: Fingerprint[];
-  thresholds: Thresholds; setThresholds: (t: Thresholds) => void;
-}) {
-  const flatlineAny = prediction?.flatline?.anyFlatlined ?? false;
-  const failsafe    = prediction?.flatline?.failsafeTriggered ?? false;
-  const layers = [
-    { n: "01", name: "Composite WQI",              desc: "Stage-aware weighting of pH·turbidity·TDS into 0–100 score" },
-    { n: "02", name: "Confidence Analysis",         desc: "Cross-sensor agreement — drives physical re-treatment recommendation" },
-    { n: "03", name: "Flatline Detection",          desc: "Sensor death detection — triggers safety failsafe on failure", flatline: true },
-    { n: "04", name: "Cross-Sensor Recalibration",  desc: "Uses TDS+pH as ground truth to auto-correct turbidity sensor" },
-    { n: "05", name: "Cycle Fingerprinting",        desc: "Captures slope shape per cycle, detects anomalies vs history" },
-    { n: "06", name: "Stage-Aware Classification",  desc: "pre_lamella / post_lamella context changes WQI weights and notes" },
-  ];
-  const anomalyTrend = fingerprints.length >= 3
-    ? (fingerprints.slice(-3).reduce((a, f) => a + f.anomalyScore, 0) / 3).toFixed(3)
-    : null;
-  function reset(k: keyof Thresholds) { setThresholds({ ...thresholds, [k]: THRESHOLDS_DEFAULT[k] }); }
-
-  return (
-    <div>
-      {/* Layer status */}
-      <div className="s-block">
-        <div className="s-label">INTELLIGENCE LAYER STATUS</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {layers.map(l => {
-            const isBypassed = failsafe && l.n !== "03";
-            const highlight = l.flatline && flatlineAny;
-            const danger    = l.flatline && failsafe;
-            return (
-              <div key={l.n} style={{
-                display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
-                borderRadius: "var(--r-sm)",
-                background: danger ? "rgba(255,69,96,0.08)" : highlight ? "rgba(255,176,32,0.07)" : "rgba(0,0,0,0.15)",
-                border: `1px solid ${danger ? "rgba(255,69,96,0.25)" : highlight ? "rgba(255,176,32,0.22)" : "transparent"}`,
-              }}>
-                <span style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--text-dim)", minWidth: 20 }}>{l.n}</span>
-                <div style={{ flex: 1 }}>
-                  <span style={{ fontFamily: "var(--f-heading)", fontSize: 12, fontWeight: 700, color: "var(--text-primary)", display: "block" }}>{l.name}</span>
-                  <span style={{ fontFamily: "var(--f-heading)", fontSize: 10, color: "var(--text-secondary)", display: "block" }}>{l.desc}</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  {danger && <span className="dot" style={{ background: "var(--red)", animation: "statusBlink 1s infinite" }} />}
-                  <span className={`badge ${isBypassed ? "badge-red" : "badge-cyan"}`}>{isBypassed ? "BYPASSED" : "ACTIVE"}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Thresholds */}
-      <div className="s-block">
-        <div className="s-label">TUNABLE THRESHOLDS</div>
-        <ThresholdSlider label="FLATLINE_WINDOW" value={thresholds.flatlineWindow} min={2} max={8} step={1}
-          desc="Number of consecutive readings checked for sensor death. Lower = faster detection. Higher = fewer false positives."
-          onChange={v => setThresholds({ ...thresholds, flatlineWindow: v })} onReset={() => reset("flatlineWindow")} />
-        <ThresholdInput label="FLATLINE_EPSILON" value={thresholds.flatlineEpsilon} step={0.001} decimals={3}
-          desc="Maximum delta allowed before a sensor is flagged as flatlined. Below this value across all window readings = sensor dead."
-          onChange={v => setThresholds({ ...thresholds, flatlineEpsilon: v })} onReset={() => reset("flatlineEpsilon")} />
-        <ThresholdSlider label="RECAL_DISAGREEMENT_THRESHOLD" value={thresholds.recalThreshold} min={0.1} max={0.8} step={0.05}
-          desc="Normalised disagreement score between turbidity and the TDS+pH ground truth that triggers auto-correction. Lower = more aggressive."
-          onChange={v => setThresholds({ ...thresholds, recalThreshold: v })} onReset={() => reset("recalThreshold")} />
-        <ThresholdSlider label="RECAL_CORRECTION_FACTOR" value={thresholds.correctionFactor} min={0.70} max={0.99} step={0.01}
-          desc="Scale factor applied to turbidity when recalibration fires. 0.88 = 12% correction. Values below 0.80 are aggressive — use with caution."
-          onChange={v => setThresholds({ ...thresholds, correctionFactor: v })} onReset={() => reset("correctionFactor")}
-          warn={thresholds.correctionFactor < 0.80} />
-      </div>
-
-      {/* WQI weight visualiser */}
-      <div className="s-block">
-        <div className="s-label">WQI STAGE WEIGHT DISTRIBUTION</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          {(["post_lamella", "pre_lamella"] as const).map(s => {
-            const weights = s === "post_lamella"
-              ? [{ lbl: "pH", w: 25, c: "var(--cyan)" }, { lbl: "Turbidity", w: 50, c: "var(--emerald)" }, { lbl: "TDS", w: 25, c: "var(--amber)" }]
-              : [{ lbl: "pH", w: 20, c: "var(--cyan)" }, { lbl: "Turbidity", w: 30, c: "var(--emerald)" }, { lbl: "TDS", w: 50, c: "var(--amber)" }];
-            const isActive = prediction?.stageAware?.stage === s;
-            return (
-              <div key={s} style={{
-                background: "var(--bg-inset)", padding: "10px 12px",
-                border: `1px solid ${isActive ? "var(--cyan)" : "var(--border)"}`, borderRadius: "var(--r-md)",
-                transition: "border-color 0.3s ease",
-              }}>
-                <div style={{ fontSize: 9, fontFamily: "var(--f-mono)", letterSpacing: "0.08em", marginBottom: 8, color: isActive ? "var(--cyan)" : "var(--text-secondary)" }}>
-                  {s.replace("_", " ").toUpperCase()} {isActive && "← ACTIVE"}
-                </div>
-                {weights.map(w => (
-                  <div key={w.lbl} style={{ marginBottom: 5 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                      <span style={{ fontSize: 9, fontFamily: "var(--f-heading)", color: w.c }}>{w.lbl}</span>
-                      <span style={{ fontSize: 9, fontFamily: "var(--f-mono)", color: w.c }}>{w.w}%</span>
-                    </div>
-                    <div style={{ height: 4, background: "rgba(255,255,255,0.05)", borderRadius: 2 }}>
-                      <div style={{ width: `${w.w}%`, height: "100%", background: w.c, borderRadius: 2, opacity: 0.8 }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Fingerprint history */}
-      <div className="s-block">
-        <div className="s-label">CYCLE FINGERPRINT HISTORY</div>
-        {fingerprints.length === 0 ? (
-          <div style={{ color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--f-mono)", padding: "12px 0" }}>
-            No fingerprints yet. Run a treatment cycle.
-          </div>
-        ) : (
-          <>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>{["CYCLE ID","DURATION","pH Δ","TURB Δ","TDS Δ","ANOMALY","FLAGS"].map(h => (
-                    <th key={h} style={{ fontFamily: "var(--f-mono)", fontSize: 8, letterSpacing: "0.1em", color: "var(--text-dim)", textAlign: "left", padding: "5px 8px", borderBottom: "1px solid var(--border)" }}>{h}</th>
-                  ))}</tr>
-                </thead>
-                <tbody>
-                  {fingerprints.slice(-5).map(fp => (
-                    <tr key={fp.cycleId}>
-                      <td style={{ fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--text-secondary)", padding: "6px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)" }}>{fp.cycleId.slice(0, 8)}…</td>
-                      <td style={{ fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--text-secondary)", padding: "6px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)" }}>{(fp.durationMs/1000).toFixed(1)}s</td>
-                      <td style={{ fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--cyan)", padding: "6px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)" }}>{fp.phSlope.toFixed(3)}</td>
-                      <td style={{ fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--emerald)", padding: "6px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)" }}>{fp.turbiditySlope.toFixed(3)}</td>
-                      <td style={{ fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--amber)", padding: "6px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)" }}>{fp.tdsSlope.toFixed(3)}</td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)", verticalAlign: "middle" }}>
-                        <div style={{ width: 50, height: 4, background: "rgba(255,255,255,0.06)", borderRadius: 2, marginBottom: 2 }}>
-                          <div style={{ width: `${fp.anomalyScore*100}%`, height: "100%", borderRadius: 2, background: fp.anomalyScore > 0.75 ? "var(--red)" : fp.anomalyScore > 0.4 ? "var(--amber)" : "var(--emerald)" }} />
-                        </div>
-                        <span style={{ fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--text-secondary)" }}>{fp.anomalyScore.toFixed(2)}</span>
-                      </td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)" }}>
-                        {fp.anomalyFlags.map(f => <span key={f} className="badge badge-amber" style={{ fontSize: 7, marginRight: 2 }}>{f.replace(/_/g, " ").slice(0, 14)}</span>)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {anomalyTrend && (
-              <div style={{ marginTop: 8, fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--text-secondary)" }}>
-                3-cycle anomaly trend: <span style={{ color: parseFloat(anomalyTrend) > 0.5 ? "var(--red)" : "var(--emerald)" }}>{anomalyTrend}</span>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SectionSensors({ prediction, readings, stage, setStage, thresholds }: {
-  prediction: Prediction | null;
-  readings: { ph: number; turbidity: number; tds: number }[];
-  stage: Stage; setStage: (s: Stage) => void; thresholds: Thresholds;
-}) {
-  const flatline = prediction?.flatline;
-  const conf     = prediction?.confidence;
-  const recal    = prediction?.recalibration;
-  const sensors = [
-    { key: "ph" as const,        label: "pH",       unit: "pH",  dead: flatline?.ph ?? false,        color: "var(--cyan)"    },
-    { key: "turbidity" as const, label: "Turbidity",unit: "NTU", dead: flatline?.turbidity ?? false,  color: "var(--emerald)" },
-    { key: "tds" as const,       label: "TDS",      unit: "ppm", dead: flatline?.tds ?? false,        color: "var(--amber)"   },
-  ];
-  const recalDelta = recal?.triggered && recal.originalTurbidity && recal.correctedTurbidity
-    ? (((recal.correctedTurbidity - recal.originalTurbidity) / recal.originalTurbidity) * 100).toFixed(1)
-    : null;
-  const recCols: Record<string, string> = { proceed: "var(--cyan)", extend_ec_cycle: "var(--amber)", re_run_cycle: "#f97316", discard: "var(--red)" };
-
-  return (
-    <div>
-      {/* Health cards */}
-      <div className="s-block">
-        <div className="s-label">SENSOR HEALTH</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
-          {sensors.map(s => {
-            const last = readings.length > 0 ? (readings[readings.length - 1] as Record<string, number>)[s.key] : null;
-            const vals = readings.slice(-5).map(r => (r as Record<string, number>)[s.key] ?? 0);
-            return (
-              <div key={s.key} style={{
-                background: "var(--bg-inset)", border: `1px solid ${s.dead ? "rgba(255,69,96,0.35)" : "var(--border)"}`,
-                borderRadius: "var(--r-md)", padding: "10px 12px", transition: "border-color 0.3s ease",
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <span style={{ fontFamily: "var(--f-heading)", fontWeight: 700, fontSize: 12, color: s.color }}>{s.label}</span>
-                  <span className={`badge ${s.dead ? "badge-red" : "badge-emerald"}`} style={{ fontSize: 8 }}>
-                    {s.dead && <span className="dot" style={{ background: "var(--red)", animation: "pulseDot 1s infinite", width: 5, height: 5 }} />}
-                    {s.dead ? "FLATLINED" : "LIVE"}
-                  </span>
-                </div>
-                <div className="t-mono" style={{ fontSize: 18, color: s.dead ? "var(--red)" : s.color, marginBottom: 6 }}>
-                  {last != null ? last.toFixed(2) : "—"}&nbsp;<span style={{ fontSize: 9, color: "var(--text-dim)" }}>{s.unit}</span>
-                </div>
-                {vals.length > 1 && <Sparkline values={vals} color={s.dead ? "var(--red)" : s.color} />}
-              </div>
-            );
-          })}
-        </div>
-        <div style={{ fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--f-mono)", marginTop: 8 }}>
-          Flatline if delta ≤ {thresholds.flatlineEpsilon} across {thresholds.flatlineWindow} consecutive readings
-        </div>
-      </div>
-
-      {/* Agreement */}
-      {conf && (
-        <div className="s-block">
-          <div className="s-label">CROSS-SENSOR AGREEMENT</div>
-          {[
-            { lbl: "pH ↔ Turbidity", val: conf.phTurbidityAgreement },
-            { lbl: "pH ↔ TDS",       val: conf.phTdsAgreement },
-            { lbl: "Turbidity ↔ TDS",val: conf.turbidityTdsAgreement },
-          ].map(p => (
-            <div key={p.lbl} style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                <span style={{ fontSize: 10, fontFamily: "var(--f-heading)", color: "var(--text-secondary)" }}>{p.lbl}</span>
-                <span className="t-mono" style={{ fontSize: 10, color: agreementColor(p.val) }}>{p.val.toFixed(2)}</span>
-              </div>
-              <div style={{ height: 5, background: "rgba(255,255,255,0.05)", borderRadius: 3 }}>
-                <div style={{ width: `${p.val * 100}%`, height: "100%", background: agreementColor(p.val), borderRadius: 3, transition: "width 0.6s ease" }} />
-              </div>
-            </div>
-          ))}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
-            <span style={{ fontSize: 11, fontFamily: "var(--f-heading)", color: "var(--text-secondary)" }}>
-              Overall: <span className="t-mono" style={{ color: agreementColor(conf.score) }}>{conf.score.toFixed(2)}</span>
-            </span>
-            <span className="badge badge-cyan">{conf.level.toUpperCase()}</span>
-            <span className="badge" style={{ color: recCols[conf.recommendation] ?? "var(--cyan)", borderColor: recCols[conf.recommendation] ?? "var(--cyan)", background: "transparent" }}>
-              {conf.recommendation.replace(/_/g, " ").toUpperCase()}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Recalibration log */}
-      <div className="s-block">
-        <div className="s-label">RECALIBRATION LOG</div>
-        {!recal
-          ? <div style={{ color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--f-mono)" }}>No analysis data yet.</div>
-          : !recal.triggered
-          ? <div style={{ color: "var(--emerald)", fontSize: 11, fontFamily: "var(--f-mono)" }}>✓ Last cycle: no correction applied.</div>
-          : <div style={{ fontFamily: "var(--f-mono)", fontSize: 11 }}>
-              <span style={{ color: "var(--amber)" }}>⚡ CORRECTION APPLIED</span>
-              <div style={{ marginTop: 6, color: "var(--text-secondary)" }}>
-                {recal.originalTurbidity?.toFixed(1)} NTU → <span style={{ color: "var(--cyan)" }}>{recal.correctedTurbidity?.toFixed(1)} NTU</span>
-                {recalDelta && <span style={{ color: parseFloat(recalDelta) < 0 ? "var(--emerald)" : "var(--red)" }}> ({parseFloat(recalDelta) > 0 ? "+" : ""}{recalDelta}%)</span>}
-              </div>
-              <div style={{ marginTop: 4, fontSize: 9, color: "var(--text-dim)" }}>
-                disagreement: {recal.disagreementScore.toFixed(3)} · {recal.reason}
-              </div>
-            </div>
-        }
-      </div>
-
-      {/* Stage selector */}
-      <div className="s-block">
-        <div className="s-label">SENSOR POD STAGE</div>
-        <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
-          {(["pre_lamella", "post_lamella"] as Stage[]).map(s => (
-            <button key={s} onClick={() => { setStage(s); localStorage.setItem("wiq_stage", s); }}
-              style={{
-                padding: "6px 14px", borderRadius: "var(--r-md)",
-                border: `1px solid ${stage === s ? "rgba(0,212,255,0.40)" : "var(--border)"}`,
-                background: stage === s ? "rgba(0,212,255,0.08)" : "transparent",
-                color: stage === s ? "var(--cyan)" : "var(--text-secondary)",
-                fontFamily: "var(--f-heading)", fontSize: 11, fontWeight: 600, cursor: "pointer", outline: "none",
-              }}>{s.replace("_", " ")}</button>
-          ))}
-        </div>
-        <div style={{ fontSize: 9, color: "var(--text-secondary)", fontFamily: "var(--f-heading)", marginBottom: 10 }}>
-          Affects WQI weight distribution and contextual notes. Match to your sensor pod position.
-        </div>
-        <TankMiniDiagram activeStage={stage} />
-      </div>
-    </div>
-  );
-}
-
-function SectionTank({ status, prediction, backendUrl }: {
-  status: SysStatus | null; prediction: Prediction | null; backendUrl: string;
-}) {
-  const phase    = status?.phase ?? "IDLE";
-  const gateOpen = phase === "TRANSFERRING_MAIN" || phase === "ANALYZED" || phase === "COMPLETE";
-  const wqi      = prediction?.wqi?.score ?? null;
-  const [pumpState, setPumpState] = useState<Record<string, string>>({});
-  const [confirmPump, setConfirmPump] = useState<string | null>(null);
-
-  async function sendPump(cmd: string) {
-    setPumpState(p => ({ ...p, [cmd]: "pending" }));
-    try {
-      await fetch(`${backendUrl}/pump/command`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: cmd }),
-      });
-      setPumpState(p => ({ ...p, [cmd]: "sent" }));
-    } catch { setPumpState(p => ({ ...p, [cmd]: "error" })); }
-    setTimeout(() => setPumpState(p => { const n = { ...p }; delete n[cmd]; return n; }), 30000);
-  }
-
-  const brackets = [
-    { id: "F1", turb: "≤ 10 NTU",  tds: "< 1000 ppm",    desc: "Sediment + Carbon",    out: "Route to reuse",        c: "var(--cyan)"    },
-    { id: "F2", turb: "10–30 NTU", tds: "< 1000 ppm",    desc: "Sand + Carbon",         out: "Route to reuse",        c: "var(--emerald)" },
-    { id: "F3", turb: "> 30 NTU",  tds: "< 1000 ppm",    desc: "Coagulation + Sand",    out: "Treat further",         c: "var(--amber)"   },
-    { id: "F4", turb: "—",         tds: "1000–1500 ppm",  desc: "Advanced treatment",   out: "Discard recommended",   c: "#f97316"        },
-    { id: "F5", turb: "—",         tds: "> 1500 ppm",     desc: "RO / Disposal",         out: "Hard discard",          c: "var(--red)"     },
-  ];
-
-  return (
-    <div>
-      {/* Diagram */}
-      <div className="s-block">
-        <div className="s-label">TANK CROSS-SECTION</div>
-        <TankDiagram gateOpen={gateOpen} wqiScore={wqi} phase={phase} />
-      </div>
-
-      {/* EC timer */}
-      <div className="s-block">
-        <div className="s-label">EC CYCLE TIMER <span style={{ color: "var(--text-dim)", fontWeight: 400, fontSize: 9 }}>firmware-controlled · read-only</span></div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, opacity: 0.5 }}>
-          <span style={{ fontSize: 12 }}>🔒</span>
-          <input type="number" defaultValue={15} min={5} max={30} disabled
-            style={{ width: 70, background: "var(--bg-inset)", border: "1px solid rgba(0,212,255,0.10)", borderRadius: "var(--r-md)", padding: "6px 10px", fontFamily: "var(--f-mono)", fontSize: 12, color: "var(--text-primary)", outline: "none", cursor: "not-allowed" }} />
-          <span style={{ fontSize: 10, fontFamily: "var(--f-heading)", color: "var(--text-secondary)" }}>minutes minimum EC contact</span>
-        </div>
-        <div style={{ fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--f-heading)", marginTop: 5 }}>
-          Maps to ESP32 gate timer. Adjust in firmware.
-        </div>
-        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, opacity: 0.5 }}>
-          <span style={{ fontSize: 12 }}>🔒</span>
-          <span style={{ fontSize: 10, fontFamily: "var(--f-heading)", color: "var(--text-dim)" }}>Polarity reversal: every 2–3 min (firmware)</span>
-        </div>
-      </div>
-
-      {/* Pump commands */}
-      <div className="s-block">
-        <div className="s-label">PUMP COMMAND PANEL</div>
-        {phase !== "ANALYZED" && (
-          <div style={{ fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--f-mono)", marginBottom: 8 }}>
-            Available in ANALYZED phase only — current: <span style={{ color: PHASE_COLORS[phase as Phase] }}>{phase}</span>
-          </div>
-        )}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          {[
-            { cmd: "START_PUMP_A", lbl: "PUMP A — REUSE",    c: "var(--cyan)",          confirm: true },
-            { cmd: "START_PUMP_B", lbl: "PUMP B — DISCARD",  c: "var(--red)",            confirm: true },
-            { cmd: "START_PUMP_C", lbl: "PUMP C — RE-TREAT", c: "var(--amber)",          confirm: false },
-            { cmd: "STOP_ALL",     lbl: "STOP ALL",          c: "var(--text-secondary)", confirm: false },
-          ].map(p => (
-            <div key={p.cmd}>
-              <button onClick={() => p.confirm ? setConfirmPump(p.cmd) : sendPump(p.cmd)}
-                disabled={phase !== "ANALYZED"}
-                style={{
-                  width: "100%", padding: "9px 10px", borderRadius: "var(--r-md)",
-                  border: `1px solid ${phase === "ANALYZED" ? `${p.c}55` : "var(--border)"}`,
-                  background: phase === "ANALYZED" ? `${p.c}14` : "rgba(255,255,255,0.02)",
-                  color: phase === "ANALYZED" ? p.c : "var(--text-dim)",
-                  fontFamily: "var(--f-heading)", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
-                  textTransform: "uppercase", cursor: phase === "ANALYZED" ? "pointer" : "not-allowed",
-                  opacity: phase === "ANALYZED" ? 1 : 0.4, outline: "none", minHeight: 36,
-                }}>
-                {pumpState[p.cmd] === "pending" ? "Awaiting ESP32 ACK…" : pumpState[p.cmd] === "sent" ? "✓ SENT" : p.lbl}
-              </button>
-              {confirmPump === p.cmd && (
-                <div style={{ marginTop: 4, background: "rgba(255,176,32,0.05)", border: "1px solid rgba(255,176,32,0.18)", borderRadius: "var(--r-md)", padding: "8px 10px" }}>
-                  <div style={{ fontSize: 9, fontFamily: "var(--f-mono)", color: p.c }}>
-                    Confirm routing to {p.cmd === "START_PUMP_A" ? "Tank A (reuse)" : "Tank B (discard)"}?
-                  </div>
-                  <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                    <button className="btn btn-ghost" style={{ fontSize: 8, padding: "3px 8px", minHeight: "unset" }}
-                      onClick={() => { sendPump(p.cmd); setConfirmPump(null); }}>CONFIRM</button>
-                    <button className="btn btn-ghost" style={{ fontSize: 8, padding: "3px 8px", minHeight: "unset" }}
-                      onClick={() => setConfirmPump(null)}>CANCEL</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Bracket reference */}
-      <div className="s-block">
-        <div className="s-label">FILTRATION BRACKET REFERENCE</div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr>{["BRACKET","TURBIDITY","TDS","METHOD","OUTCOME"].map(h => (
-              <th key={h} style={{ fontFamily: "var(--f-mono)", fontSize: 8, letterSpacing: "0.1em", color: "var(--text-dim)", textAlign: "left", padding: "5px 8px", borderBottom: "1px solid var(--border)" }}>{h}</th>
-            ))}</tr></thead>
-            <tbody>
-              {brackets.map(b => (
-                <tr key={b.id} style={prediction?.bracket === b.id ? { background: `${b.c}08`, boxShadow: `inset 0 0 0 1px ${b.c}44` } : {}}>
-                  <td style={{ padding: "7px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)", verticalAlign: "middle" }}>
-                    <span className="badge" style={{ color: b.c, borderColor: b.c, background: "transparent" }}>{b.id}</span>
-                  </td>
-                  <td style={{ fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--text-secondary)", padding: "7px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)" }}>{b.turb}</td>
-                  <td style={{ fontFamily: "var(--f-mono)", fontSize: 9, color: "var(--text-secondary)", padding: "7px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)" }}>{b.tds}</td>
-                  <td style={{ fontSize: 9, fontFamily: "var(--f-heading)", color: "var(--text-primary)", padding: "7px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)" }}>{b.desc}</td>
-                  <td style={{ fontSize: 9, fontFamily: "var(--f-heading)", color: b.c, padding: "7px 8px", borderBottom: "1px solid rgba(0,212,255,0.05)" }}>{b.out}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Drain guide */}
-      <div className="s-block">
-        <div className="s-label">DRAIN SEQUENCE GUIDE</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {[
-            { ico: "↓", lbl: "Remove plug",      desc: "Sludge drains by gravity from side cut at tank base" },
-            { ico: "●", lbl: "Reinsert plug",     desc: "Once sludge fully cleared, seal the side cut" },
-            { ico: "↑", lbl: "Open upper outlet", desc: "Clean water drains from above the sludge layer" },
-          ].map((s, i) => (
-            <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-              <span style={{ fontSize: 14, color: "var(--cyan)", minWidth: 20, fontFamily: "var(--f-mono)" }}>{s.ico}</span>
-              <div>
-                <span style={{ fontFamily: "var(--f-heading)", fontWeight: 700, fontSize: 11, color: "var(--text-primary)" }}>{s.lbl}</span>
-                <div style={{ fontSize: 9, fontFamily: "var(--f-heading)", color: "var(--text-secondary)", marginTop: 2 }}>{s.desc}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div style={{ fontSize: 9, fontFamily: "var(--f-mono)", color: "var(--text-dim)", marginTop: 10 }}>
-          Turbidity sensor signals drain-ready. Watch for ANALYZED phase with high WQI before draining.
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SectionAlerts({ alerts, setAlerts, alertHistory }: {
-  alerts: AlertConfig; setAlerts: (a: AlertConfig) => void; alertHistory: AlertEntry[];
-}) {
-  async function toggleBrowser(enable: boolean) {
-    if (!enable) { setAlerts({ ...alerts, browser: false }); return; }
-    const p = await Notification.requestPermission();
-    setAlerts({ ...alerts, browser: p === "granted" });
-  }
-
-  return (
-    <div>
-      {/* Thresholds */}
-      <div className="s-block">
-        <div className="s-label">ALERT THRESHOLDS</div>
-        {([
-          { lbl: "WQI drops below",        key: "wqiBelow" as const,       unit: "/100", min: 0, max: 100, step: 1,    desc: "maps to wqi.score" },
-          { lbl: "Confidence drops below",  key: "confidenceBelow" as const, unit: "/1.0", min: 0, max: 1,   step: 0.05, desc: "maps to confidence.score" },
-          { lbl: "Anomaly score exceeds",   key: "anomalyAbove" as const,    unit: "/1.0", min: 0, max: 1,   step: 0.05, desc: "maps to cycleFingerprint.anomalyScore" },
-        ]).map(t => (
-          <div key={t.key} style={{ padding: "10px 0", borderBottom: "1px solid rgba(0,212,255,0.07)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <span style={{ fontFamily: "var(--f-heading)", fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{t.lbl}</span>
-                <span style={{ fontSize: 9, color: "var(--text-dim)", marginLeft: 8, fontFamily: "var(--f-mono)" }}>{t.desc}</span>
-              </div>
-              <span className="t-mono" style={{ fontSize: 12, color: "var(--cyan)" }}>{alerts[t.key]}{t.unit}</span>
-            </div>
-            <input type="range" min={t.min} max={t.max} step={t.step} value={alerts[t.key]}
-              onChange={e => setAlerts({ ...alerts, [t.key]: parseFloat(e.target.value) })}
-              style={{
-                width: "100%", height: 4, borderRadius: 2, outline: "none", border: "none",
-                cursor: "pointer", appearance: "none", marginTop: 8,
-                background: `linear-gradient(to right, var(--cyan) ${((alerts[t.key] - t.min) / (t.max - t.min)) * 100}%, rgba(0,212,255,0.15) ${((alerts[t.key] - t.min) / (t.max - t.min)) * 100}%)`,
-              } as React.CSSProperties}
-            />
-          </div>
-        ))}
-        <div style={{ padding: "10px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <span style={{ fontFamily: "var(--f-heading)", fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>Sensor flatline detected</span>
-            <div style={{ fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--f-mono)", marginTop: 2 }}>always notify — cannot be disabled</div>
-          </div>
-          <div style={{ width: 40, height: 22, borderRadius: 11, background: "rgba(0,212,255,0.18)", border: "1px solid rgba(0,212,255,0.40)", position: "relative", cursor: "not-allowed" }}>
-            <div style={{ position: "absolute", top: 3, left: 21, width: 14, height: 14, borderRadius: "50%", background: "var(--cyan)", boxShadow: "0 0 8px rgba(0,212,255,0.5)" }} />
-          </div>
-        </div>
-      </div>
-
-      {/* Notification method */}
-      <div className="s-block">
-        <div className="s-label">NOTIFICATION METHOD</div>
-        {([
-          { key: "inApp" as const,     lbl: "In-App Toast",          sub: "Shows toast in dashboard",        action: (v: boolean) => setAlerts({ ...alerts, inApp: v }) },
-          { key: "browser" as const,   lbl: "Browser Notification",  sub: "Native OS push — requires permission", action: toggleBrowser },
-          { key: "vibration" as const, lbl: "Vibration",             sub: "Mobile devices only",              action: (v: boolean) => setAlerts({ ...alerts, vibration: v }) },
-        ]).map(t => (
-          <div key={t.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <div>
-              <span style={{ fontFamily: "var(--f-heading)", fontWeight: 600, fontSize: 12, color: "var(--text-primary)" }}>{t.lbl}</span>
-              <div style={{ fontSize: 9, fontFamily: "var(--f-mono)", color: "var(--text-dim)", marginTop: 2 }}>{t.sub}</div>
-            </div>
-            <button onClick={() => t.action(!alerts[t.key])}
-              style={{ background: "transparent", border: "none", cursor: "pointer", padding: 2, outline: "none" }}>
-              <div style={{ width: 40, height: 22, borderRadius: 11, background: alerts[t.key] ? "rgba(0,212,255,0.18)" : "rgba(255,255,255,0.06)", border: `1px solid ${alerts[t.key] ? "rgba(0,212,255,0.40)" : "var(--border)"}`, position: "relative", transition: "all 0.22s ease" }}>
-                <div style={{ position: "absolute", top: 3, left: alerts[t.key] ? 21 : 3, width: 14, height: 14, borderRadius: "50%", background: alerts[t.key] ? "var(--cyan)" : "var(--text-secondary)", boxShadow: alerts[t.key] ? "0 0 8px rgba(0,212,255,0.5)" : "none", transition: "all 0.22s cubic-bezier(0.34,1.56,0.64,1)" }} />
-              </div>
-            </button>
-          </div>
-        ))}
-      </div>
-
-      {/* Alert history */}
-      <div className="s-block">
-        <div className="s-label">ALERT HISTORY <span style={{ color: "var(--text-dim)", fontWeight: 400, fontSize: 9 }}>this session</span></div>
-        {alertHistory.length === 0
-          ? <div style={{ color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--f-mono)", padding: "8px 0" }}>No alerts triggered this session.</div>
-          : <div style={{ maxHeight: 200, overflowY: "auto" }}>
-              {alertHistory.slice(-10).reverse().map((a, i) => (
-                <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                  <span className="t-mono" style={{ fontSize: 9, color: "var(--text-dim)", minWidth: 70 }}>
-                    {new Date(a.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                  </span>
-                  <span className="badge badge-amber" style={{ fontSize: 8 }}>{a.type}</span>
-                  <span className="t-mono" style={{ fontSize: 9, color: "var(--text-secondary)" }}>{a.value}</span>
-                </div>
-              ))}
-            </div>
-        }
-      </div>
-    </div>
-  );
-}
-
-function SectionAccount({ showToast }: { showToast: (msg: string) => void }) {
-  const user = useWIQUser();
-  const role = getRole(user.email ?? "", user.name);
-  const initials = user.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
-
-  return (
-    <div>
-      {/* Identity */}
-      <div className="s-block">
-        <div className="s-label">USER IDENTITY</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          {user.photo
-            ? <img src={user.photo} style={{ width: 48, height: 48, borderRadius: 12, border: "1px solid var(--border-mid)" }} alt={user.name} />
-            : <div style={{ width: 48, height: 48, borderRadius: 12, border: "1px solid var(--border-mid)", background: "linear-gradient(135deg,rgba(0,212,255,0.22),rgba(0,212,255,0.07))", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--f-mono)", fontWeight: 700, fontSize: 15, color: "var(--cyan)", flexShrink: 0 }}>{initials}</div>
-          }
-          <div>
-            <div style={{ fontFamily: "var(--f-heading)", fontWeight: 700, fontSize: 15, color: "var(--text-primary)" }}>{user.name}</div>
-            <div style={{ fontFamily: "var(--f-mono)", fontSize: 10, color: "var(--text-secondary)", marginTop: 2 }}>{user.email}</div>
-            <div style={{ marginTop: 5 }}>
-              <span className={`badge ${role === "ADMIN" ? "badge-cyan" : "badge-dim"}`}>{role}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Auth */}
-      <div className="s-block" style={{ borderColor: "rgba(255,176,32,0.22)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <div className="s-label" style={{ marginBottom: 0 }}>AUTHENTICATION</div>
-          <span className="badge badge-amber">PENDING INTEGRATION</span>
-        </div>
-        <div style={{ fontSize: 11, fontFamily: "var(--f-heading)", color: "var(--text-secondary)", marginBottom: 10 }}>
-          Current method: <span className="t-mono" style={{ color: "var(--text-primary)", fontSize: 10 }}>Simulated via localStorage</span>
-        </div>
-        <button className="btn btn-ghost" style={{ fontSize: 10 }} onClick={() => showToast("OAuth integration coming in next build.")}>
-          🔗 Connect Google Account
-        </button>
-      </div>
-
-      {/* Persistence notice */}
-      <div className="s-block" style={{ background: "rgba(0,50,120,0.06)" }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-          <span style={{ color: "var(--text-secondary)", fontSize: 14, marginTop: 1, flexShrink: 0 }}>ℹ</span>
-          <div>
-            <div style={{ fontFamily: "var(--f-heading)", fontWeight: 600, fontSize: 11, color: "var(--text-primary)", marginBottom: 4 }}>SESSION PERSISTENCE</div>
-            <div style={{ fontSize: 10, fontFamily: "var(--f-heading)", color: "var(--text-secondary)", lineHeight: 1.5 }}>
-              The backend is stateless. All readings, fingerprints, and predictions are lost on server restart. This is by design for the current build. Production version will persist to a database.
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Danger zone */}
-      <div style={{ borderTop: "1px solid rgba(255,69,96,0.15)", paddingTop: 16, margin: "0 16px 16px" }}>
-        <div style={{ fontFamily: "var(--f-heading)", fontSize: 10, fontWeight: 700, letterSpacing: "0.14em", color: "var(--red)", marginBottom: 8, textTransform: "uppercase" }}>DANGER ZONE</div>
-        <div style={{ fontSize: 10, fontFamily: "var(--f-heading)", color: "var(--text-secondary)", marginBottom: 10 }}>
-          Clears all <span className="t-mono" style={{ fontSize: 9, color: "var(--text-primary)" }}>wiq_*</span> localStorage keys and reloads.
-        </div>
-        <HoldButton label="CLEAR ALL LOCAL SETTINGS" color="red" onConfirm={() => {
-          Object.keys(localStorage).filter(k => k.startsWith("wiq_")).forEach(k => localStorage.removeItem(k));
-          window.location.reload();
-        }} />
-      </div>
-    </div>
-  );
-}
-
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── MAIN COMPONENT ───────────────────────────────────────────
 export default function Settings() {
-  const [activeSection, setActiveSection] = useState<Section>("system");
-  const [status, setStatus]       = useState<SysStatus | null>(null);
-  const [prediction, setPrediction] = useState<Prediction | null>(null);
-  const [fingerprints, setFingerprints] = useState<Fingerprint[]>([]);
-  const [readings, setReadings]   = useState<{ ph: number; turbidity: number; tds: number }[]>([]);
-  const [syncing, setSyncing]     = useState(false);
-  const [lastSync, setLastSync]   = useState<Date | null>(null);
-  const [railFlash, setRailFlash] = useState(false);
-  const [batchSize, setBatchSize] = useState(() => parseInt(localStorage.getItem("wiq_batch_size") ?? "5") || 5);
-  const [stage, setStage]         = useState<Stage>(() => (localStorage.getItem("wiq_stage") as Stage) ?? "post_lamella");
-  const [thresholds, setThresholds] = useState<Thresholds>(() => {
-    try { const r = localStorage.getItem("wiq_thresholds"); return r ? JSON.parse(r) : THRESHOLDS_DEFAULT; } catch { return THRESHOLDS_DEFAULT; }
-  });
-  const [alertConfig, setAlertConfig] = useState<AlertConfig>(() => {
-    try { const r = localStorage.getItem("wiq_alerts"); return r ? JSON.parse(r) : ALERTS_DEFAULT; } catch { return ALERTS_DEFAULT; }
-  });
-  const [alertHistory, setAlertHistory] = useState<AlertEntry[]>([]);
-  const [toast, setToast] = useState<string | null>(null);
-  const backendUrl = localStorage.getItem("wiq_backend_url") ?? DEFAULT_URL;
+  const mode: Mode = "live";
+  const session = { active: true, completed: false, collected: 6, required: 10 };
+  const backendConnected = useBackendConnectivity(
+    "https://water-quality-backend-10-kijx.onrender.com/session/status"
+  );
 
-  const showToast = useCallback((msg: string) => {
-    setToast(msg); setTimeout(() => setToast(null), 3500);
+  const saved = loadSettings();
+
+  const [activeTab, setActiveTab] = useState<Tab>("system");
+  const [thresholds, setThresholds] = useState<SensorThresholds>(saved?.thresholds ?? DEFAULT_THRESHOLDS);
+  const [display, setDisplay] = useState<DisplayPrefs>(saved?.display ?? DEFAULT_DISPLAY);
+  const [sessionCfg, setSessionCfg] = useState<SessionConfig>(saved?.session ?? DEFAULT_SESSION);
+  const [calibration, setCalibration] = useState<CalibrationOffsets>(saved?.calibration ?? DEFAULT_CALIB);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "error">("idle");
+  const [pingResult, setPingResult] = useState<string | null>(null);
+  const [pingLoading, setPingLoading] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  // ── Save all settings ──
+  const handleSave = useCallback(() => {
+    try {
+      saveSettings({ thresholds, display, session: sessionCfg, calibration });
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 2000);
+    } catch {
+      setSaveStatus("error");
+    }
+  }, [thresholds, display, sessionCfg, calibration]);
+
+  // ── Reset to defaults ──
+  const handleReset = useCallback((section: string) => {
+    if (section === "thresholds") setThresholds({ ...DEFAULT_THRESHOLDS });
+    if (section === "display")    setDisplay({ ...DEFAULT_DISPLAY });
+    if (section === "session")    setSessionCfg({ ...DEFAULT_SESSION });
+    if (section === "calibration") setCalibration({ ...DEFAULT_CALIB });
   }, []);
 
-  const doSync = useCallback(async () => {
-    setSyncing(true);
+  // ── Export full snapshot ──
+  const exportSnapshot = useCallback(() => {
+    const snapshot = {
+      timestamp: new Date().toISOString(),
+      version: "2.0",
+      mode,
+      backendConnected,
+      session,
+      thresholds,
+      display,
+      sessionConfig: sessionCfg,
+      calibrationOffsets: calibration,
+    };
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `wateriq-snapshot-${new Date().toISOString().slice(0,19).replace(/:/g,"-")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [mode, backendConnected, session, thresholds, display, sessionCfg, calibration]);
+
+  // ── Export CSV of current thresholds ──
+  const exportThresholdsCSV = useCallback(() => {
+    const rows = [
+      ["Parameter","Min/Threshold","Max/Threshold","Unit"],
+      ["pH Min", thresholds.phMin, "–", ""],
+      ["pH Max", "–", thresholds.phMax, ""],
+      ["Turbidity F1", "–", thresholds.turbidityF1, "NTU"],
+      ["Turbidity F2", "–", thresholds.turbidityF2, "NTU"],
+      ["Turbidity F3", "–", thresholds.turbidityF3, "NTU"],
+      ["Turbidity F4", "–", thresholds.turbidityF4, "NTU"],
+      ["TDS Reusable Max", "–", thresholds.tdsReusable, "mg/L"],
+      ["TDS Severe Min", thresholds.tdsSevere, "–", "mg/L"],
+      ["ORP Min", thresholds.orpMin, "–", "mV"],
+      ["NH₃ Max", "–", thresholds.nh3Max, "mg/L"],
+    ];
+    const csv = rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "wateriq-thresholds.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [thresholds]);
+
+  // ── Import settings JSON ──
+  const importSettings = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const data = JSON.parse(ev.target?.result as string);
+          if (data.thresholds)    setThresholds(data.thresholds);
+          if (data.display)       setDisplay(data.display);
+          if (data.sessionConfig) setSessionCfg(data.sessionConfig);
+          if (data.calibrationOffsets) setCalibration(data.calibrationOffsets);
+          setImportError(null);
+        } catch {
+          setImportError("Invalid JSON file. Could not import settings.");
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }, []);
+
+  // ── Ping backend ──
+  const pingBackend = useCallback(async () => {
+    setPingLoading(true);
+    setPingResult(null);
+    const t0 = performance.now();
     try {
-      const t0 = Date.now();
-      const [s, p, f, r] = await Promise.allSettled([
-        fetch(`${backendUrl}/session/status`).then(x => x.json()),
-        fetch(`${backendUrl}/prediction/latest`).then(x => x.json()),
-        fetch(`${backendUrl}/fingerprints`).then(x => x.json()),
-        fetch(`${backendUrl}/session/readings`).then(x => x.json()),
-      ]);
-      const ms = Date.now() - t0;
-      if (s.status === "fulfilled") setStatus({ ...s.value, latencyMs: ms, online: true });
-      if (p.status === "fulfilled") setPrediction(p.value);
-      if (f.status === "fulfilled") setFingerprints(Array.isArray(f.value) ? f.value : (f.value?.fingerprints ?? []));
-      if (r.status === "fulfilled") setReadings(Array.isArray(r.value) ? r.value : (r.value?.readings ?? []));
-      setLastSync(new Date()); setRailFlash(true); setTimeout(() => setRailFlash(false), 600);
-    } catch { setStatus(s => s ? { ...s, online: false } : null); }
-    setSyncing(false);
-  }, [backendUrl]);
+      const res = await fetch("https://water-quality-backend-10-kijx.onrender.com/session/status", { signal: AbortSignal.timeout(5000) });
+      const ms = Math.round(performance.now() - t0);
+      setPingResult(res.ok ? `✓ Responded in ${ms}ms  (HTTP ${res.status})` : `✗ HTTP ${res.status} in ${ms}ms`);
+    } catch (err: any) {
+      const ms = Math.round(performance.now() - t0);
+      setPingResult(`✗ Failed after ${ms}ms — ${err?.message ?? "Network error"}`);
+    } finally {
+      setPingLoading(false);
+    }
+  }, []);
 
-  useEffect(() => { doSync(); const id = setInterval(doSync, 10000); return () => clearInterval(id); }, [doSync]);
-  useEffect(() => { localStorage.setItem("wiq_thresholds", JSON.stringify(thresholds)); }, [thresholds]);
-  useEffect(() => { localStorage.setItem("wiq_batch_size", String(batchSize)); }, [batchSize]);
-  useEffect(() => { localStorage.setItem("wiq_alerts", JSON.stringify(alertConfig)); }, [alertConfig]);
+  // ── Copy backend URL ──
+  const copyBackendURL = useCallback(() => {
+    navigator.clipboard.writeText("https://water-quality-backend-10-kijx.onrender.com");
+  }, []);
 
-  // Alert checking
-  useEffect(() => {
-    if (!prediction) return;
-    const now = Date.now(), toAdd: AlertEntry[] = [];
-    if (prediction.wqi?.score != null && prediction.wqi.score < alertConfig.wqiBelow)
-      toAdd.push({ ts: now, type: "LOW WQI", value: `score ${prediction.wqi.score.toFixed(1)} < ${alertConfig.wqiBelow}` });
-    if (prediction.confidence?.score != null && prediction.confidence.score < alertConfig.confidenceBelow)
-      toAdd.push({ ts: now, type: "LOW CONFIDENCE", value: `${prediction.confidence.score.toFixed(2)} < ${alertConfig.confidenceBelow}` });
-    if (prediction.cycleFingerprint?.anomalyScore != null && prediction.cycleFingerprint.anomalyScore > alertConfig.anomalyAbove)
-      toAdd.push({ ts: now, type: "HIGH ANOMALY", value: `score ${prediction.cycleFingerprint.anomalyScore.toFixed(2)} > ${alertConfig.anomalyAbove}` });
-    if (prediction.flatline?.anyFlatlined)
-      toAdd.push({ ts: now, type: "SENSOR FLATLINE", value: "sensor dead detected" });
-    if (toAdd.length > 0) setAlertHistory(h => [...h, ...toAdd].slice(-50));
-  }, [prediction, alertConfig]);
-
-  const sectionContent: Record<Section, React.ReactNode> = {
-    system:       <SectionSystem status={status} batchSize={batchSize} setBatchSize={setBatchSize} onStatusUpdate={doSync} backendUrl={backendUrl} />,
-    intelligence: <SectionIntelligence prediction={prediction} fingerprints={fingerprints} thresholds={thresholds} setThresholds={setThresholds} />,
-    sensors:      <SectionSensors prediction={prediction} readings={readings} stage={stage} setStage={setStage} thresholds={thresholds} />,
-    tank:         <SectionTank status={status} prediction={prediction} backendUrl={backendUrl} />,
-    alerts:       <SectionAlerts alerts={alertConfig} setAlerts={setAlertConfig} alertHistory={alertHistory} />,
-    account:      <SectionAccount showToast={showToast} />,
-  };
-
+  // ─── RENDER ─────────────────────────────────────────────────
   return (
-    <>
+    <div style={S.root}>
       <style>{CSS}</style>
-      {toast && <div className="wiq-toast">{toast}</div>}
-      <div className="page" style={{ paddingTop: 12 }}>
-        <div className="settings-layout">
 
-          {/* Left nav */}
-          <nav className="settings-leftnav">
-            <div style={{ fontFamily: "var(--f-mono)", fontSize: 8, letterSpacing: "0.14em", color: "var(--text-dim)", padding: "8px 14px 4px" }}>CONFIGURATION</div>
-            {SECTIONS.map(s => (
-              <button key={s.id} onClick={() => setActiveSection(s.id)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 14px",
-                  border: "none", background: activeSection === s.id ? "rgba(0,212,255,0.07)" : "transparent",
-                  cursor: "pointer", position: "relative", textAlign: "left", outline: "none",
-                  transition: "background 0.18s ease",
-                }}>
-                <span style={{ fontSize: 13, color: activeSection === s.id ? "var(--cyan)" : "var(--text-secondary)", width: 16, textAlign: "center", flexShrink: 0 }}>{s.icon}</span>
-                <span style={{ fontFamily: "var(--f-heading)", fontSize: 12, fontWeight: 600, color: activeSection === s.id ? "var(--text-primary)" : "var(--text-secondary)" }}>{s.label}</span>
-                {activeSection === s.id && (
-                  <span style={{ position: "absolute", right: 0, top: "20%", bottom: "20%", width: 2, background: "var(--cyan)", borderRadius: 1, boxShadow: "0 0 8px rgba(0,212,255,0.6)" }} />
-                )}
-              </button>
-            ))}
-          </nav>
-
-          {/* Center */}
-          <div className="settings-center">
-            {/* Mobile pill tabs */}
-            <div className="settings-mobiletabs">
-              {SECTIONS.map(s => (
-                <button key={s.id} onClick={() => setActiveSection(s.id)}
-                  style={{
-                    flexShrink: 0, padding: "6px 12px", borderRadius: 20,
-                    border: `1px solid ${activeSection === s.id ? "var(--border-mid)" : "var(--border)"}`,
-                    background: activeSection === s.id ? "rgba(0,212,255,0.08)" : "var(--bg-glass)",
-                    fontFamily: "var(--f-heading)", fontSize: 11, fontWeight: 600,
-                    color: activeSection === s.id ? "var(--cyan)" : "var(--text-secondary)",
-                    cursor: "pointer", whiteSpace: "nowrap", outline: "none",
-                    backdropFilter: "blur(12px)",
-                  }}>{s.icon} {s.label}</button>
-              ))}
-            </div>
-
-            <div className="g-card">
-              <div className="g-card-header">
-                <span className="g-card-accent-bar" style={{ background: "var(--cyan)" }} />
-                <span className="g-card-header-label">
-                  {SECTIONS.find(s => s.id === activeSection)?.icon}&nbsp;{SECTIONS.find(s => s.id === activeSection)?.label.toUpperCase()}
-                </span>
-                <span style={{ marginLeft: "auto", fontSize: 9, fontFamily: "var(--f-mono)", color: "var(--text-dim)" }}>
-                  settings / {activeSection}
-                </span>
-              </div>
-              {sectionContent[activeSection]}
-            </div>
-          </div>
-
-          {/* Right rail */}
-          <LivePulse status={status} prediction={prediction} batchSize={batchSize}
-            syncing={syncing} onSync={doSync} lastSync={lastSync} railFlash={railFlash} />
+      {/* HEADER */}
+      <div style={S.header}>
+        <div style={S.headerLeft}>
+          <div style={S.headerDot} />
+          <span style={S.headerTitle}>Water<span style={{ color: "#00d4ff" }}>IQ</span></span>
+          <span style={S.headerSep}>|</span>
+          <span style={S.headerSub}>System Settings</span>
+        </div>
+        <div style={S.headerRight}>
+          {importError && <span style={{ color: "#ff3f5a", fontSize: 11, fontFamily: "monospace" }}>{importError}</span>}
+          <button className="btn-ghost" onClick={importSettings}>⬆ Import</button>
+          <button className="btn-ghost" onClick={exportSnapshot}>⬇ Export JSON</button>
+          <button
+            className={saveStatus === "saved" ? "btn-saved" : saveStatus === "error" ? "btn-error" : "btn-save"}
+            onClick={handleSave}
+          >
+            {saveStatus === "saved" ? "✓ Saved" : saveStatus === "error" ? "✗ Error" : "Save Changes"}
+          </button>
         </div>
       </div>
-    </>
+
+      {/* TAB BAR */}
+      <div style={S.tabBar}>
+        {(["system","thresholds","display","session","diagnostics","about"] as Tab[]).map(t => (
+          <button
+            key={t}
+            className={`tab-btn ${activeTab === t ? "tab-active" : ""}`}
+            onClick={() => setActiveTab(t)}
+          >
+            {{ system:"⬡ System", thresholds:"◈ Thresholds", display:"◻ Display", session:"▷ Session", diagnostics:"⚙ Diagnostics", about:"ℹ About" }[t]}
+          </button>
+        ))}
+      </div>
+
+      {/* CONTENT */}
+      <div style={S.content}>
+
+        {/* ── SYSTEM TAB ─────────────────────────────────────── */}
+        {activeTab === "system" && (
+          <div style={S.grid2}>
+            <div style={S.col}>
+              <Card title="System Status" accent="#00ff9d">
+                <SystemStatus mode={mode} session={session} backendConnected={backendConnected} />
+                <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+                  <StatChip label="MODE"    value={mode.toUpperCase()}  color={mode === "live" ? "#00ff9d" : "#ffdb58"} />
+                  <StatChip label="BACKEND" value={backendConnected ? "ONLINE" : "OFFLINE"} color={backendConnected ? "#00ff9d" : "#ff3f5a"} />
+                  <StatChip label="SESSION" value={session.active ? "ACTIVE" : "IDLE"}      color={session.active ? "#00d4ff" : "#4a6580"} />
+                </div>
+              </Card>
+
+              <Card title="Sensor Configuration" accent="#00d4ff">
+                <InfoRow label="pH Sensor"         value="Analog · ESP32 ADC" />
+                <InfoRow label="TDS Sensor"        value="Analog · ESP32 ADC" />
+                <InfoRow label="Turbidity Sensor"  value="Analog · ESP32 ADC" />
+                <InfoRow label="ORP Sensor"        value="Analog · ESP32 ADC" />
+                <InfoRow label="NH₃ Sensor"        value="Analog · ESP32 ADC" />
+                <InfoRow label="Sampling"          value="Managed by ESP firmware" />
+                <InfoRow label="Sample Rate"       value={`${sessionCfg.samplesRequired} per cycle`} />
+              </Card>
+            </div>
+
+            <div style={S.col}>
+              <Card title="Tank & Pump Routing" accent="#c084fc">
+                <InfoRow label="Tank A — Reusable"    value="F1 · F2 brackets" dot="#00ff9d" />
+                <InfoRow label="Tank B — Treatment"   value="F3 · F4 · F5 brackets" dot="#ff3f5a" />
+                <InfoRow label="Pump control"         value="Relay module" />
+                <InfoRow label="Routing authority"    value="Backend API" />
+                <div style={{ marginTop: 12, padding: "8px 12px", background: "#00ff9d0a", border: "1px solid #00ff9d22", borderRadius: 6 }}>
+                  <div style={{ fontSize: 10, color: "#00ff9d", fontFamily: "monospace", marginBottom: 4 }}>ROUTING RULES</div>
+                  {[["F1","< 2 NTU, < 200 mg/L","Tank A"],["F2","< 4 NTU, < 300 mg/L","Tank A"],["F3","< 8 NTU, < 500 mg/L","Tank B"],["F4","< 15 NTU, < 800 mg/L","Tank B"],["F5","≥ 800 mg/L TDS","Tank B"]].map(([br,cond,tank]) => (
+                    <div key={br} style={{ display:"flex", gap:8, alignItems:"center", padding:"3px 0", borderBottom:"1px solid #071828", fontSize:11 }}>
+                      <span style={{ fontFamily:"monospace", fontWeight:700, color: tank==="Tank A" ? "#00ff9d" : "#ff3f5a", minWidth:22 }}>{br}</span>
+                      <span style={{ color:"#4a7090", flex:1 }}>{cond}</span>
+                      <span style={{ color: tank==="Tank A" ? "#00ff9d" : "#ff3f5a", fontFamily:"monospace", fontSize:10 }}>→ {tank}</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+
+              <Card title="Data Handling" accent="#ffdb58">
+                <InfoRow label="Data scope"       value="Active session only" />
+                <InfoRow label="Persistence"      value="Frontend localStorage" />
+                <InfoRow label="PII stored"       value="None" dot="#00ff9d" />
+                <InfoRow label="Log retention"    value={`${sessionCfg.logRetentionCycles} cycles`} />
+                <InfoRow label="Auto-export"      value={sessionCfg.autoExportOnComplete ? "Enabled" : "Disabled"} dot={sessionCfg.autoExportOnComplete ? "#00ff9d" : "#ff3f5a"} />
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {/* ── THRESHOLDS TAB ─────────────────────────────────── */}
+        {activeTab === "thresholds" && (
+          <div style={S.grid2}>
+            <div style={S.col}>
+              <Card title="pH Thresholds" accent="#00ff9d" onReset={() => handleReset("thresholds")}>
+                <NumField label="pH Minimum" value={thresholds.phMin} min={0} max={14} step={0.1} unit=""
+                  onChange={v => setThresholds(p => ({ ...p, phMin: v }))} color="#00ff9d" />
+                <NumField label="pH Maximum" value={thresholds.phMax} min={0} max={14} step={0.1} unit=""
+                  onChange={v => setThresholds(p => ({ ...p, phMax: v }))} color="#00ff9d" />
+                <RangeBar lo={thresholds.phMin} hi={thresholds.phMax} min={0} max={14} color="#00ff9d" label="pH safe window" />
+              </Card>
+
+              <Card title="Turbidity Brackets (NTU)" accent="#00d4ff">
+                <NumField label="F1 → F2 boundary" value={thresholds.turbidityF1} min={0} max={50} step={0.5} unit=" NTU"
+                  onChange={v => setThresholds(p => ({ ...p, turbidityF1: v }))} color="#7fffd4" />
+                <NumField label="F2 → F3 boundary" value={thresholds.turbidityF2} min={0} max={50} step={0.5} unit=" NTU"
+                  onChange={v => setThresholds(p => ({ ...p, turbidityF2: v }))} color="#00d4ff" />
+                <NumField label="F3 → F4 boundary" value={thresholds.turbidityF3} min={0} max={50} step={0.5} unit=" NTU"
+                  onChange={v => setThresholds(p => ({ ...p, turbidityF3: v }))} color="#ffdb58" />
+                <NumField label="F4 → F5 boundary" value={thresholds.turbidityF4} min={0} max={50} step={0.5} unit=" NTU"
+                  onChange={v => setThresholds(p => ({ ...p, turbidityF4: v }))} color="#ff8c42" />
+              </Card>
+
+              <Card title="Calibration Offsets" accent="#c084fc" onReset={() => handleReset("calibration")}>
+                <p style={{ fontSize: 11, color: "#4a7090", marginBottom: 10, fontFamily: "monospace" }}>
+                  Applied additively to raw sensor readings. Use after field calibration.
+                </p>
+                {(["ph","turbidity","tds","orp","nh3"] as (keyof CalibrationOffsets)[]).map(k => (
+                  <NumField key={k}
+                    label={`${k.toUpperCase()} offset`}
+                    value={calibration[k]}
+                    min={-50} max={50} step={0.01}
+                    unit={k === "ph" ? "" : k === "tds" ? " mg/L" : k === "orp" ? " mV" : " NTU"}
+                    onChange={v => setCalibration(p => ({ ...p, [k]: v }))}
+                    color="#c084fc"
+                    showSign
+                  />
+                ))}
+              </Card>
+            </div>
+
+            <div style={S.col}>
+              <Card title="TDS Thresholds" accent="#ff8c42">
+                <NumField label="Reusable max (F1–F2)" value={thresholds.tdsReusable} min={50} max={2000} step={10} unit=" mg/L"
+                  onChange={v => setThresholds(p => ({ ...p, tdsReusable: v }))} color="#ff8c42" />
+                <NumField label="Severe min (F5)" value={thresholds.tdsSevere} min={50} max={2000} step={10} unit=" mg/L"
+                  onChange={v => setThresholds(p => ({ ...p, tdsSevere: v }))} color="#ff3f5a" />
+                <RangeBar lo={0} hi={thresholds.tdsReusable} min={0} max={2000} color="#00ff9d" label="Reusable TDS zone" />
+                <RangeBar lo={thresholds.tdsSevere} hi={2000} min={0} max={2000} color="#ff3f5a" label="Severe TDS zone" />
+              </Card>
+
+              <Card title="ORP & NH₃ Limits" accent="#ff6b8a">
+                <NumField label="ORP minimum" value={thresholds.orpMin} min={0} max={600} step={5} unit=" mV"
+                  onChange={v => setThresholds(p => ({ ...p, orpMin: v }))} color="#c084fc" />
+                <NumField label="NH₃ maximum" value={thresholds.nh3Max} min={0} max={10} step={0.1} unit=" mg/L"
+                  onChange={v => setThresholds(p => ({ ...p, nh3Max: v }))} color="#ff6b8a" />
+              </Card>
+
+              <Card title="Export Thresholds" accent="#4a7090">
+                <p style={{ fontSize: 11, color: "#4a7090", marginBottom: 10, fontFamily: "monospace" }}>
+                  Download current threshold config for documentation or sharing.
+                </p>
+                <button className="btn-outline-full" onClick={exportThresholdsCSV}>
+                  ⬇ Export as CSV
+                </button>
+                <button className="btn-outline-full" style={{ marginTop: 6 }} onClick={exportSnapshot}>
+                  ⬇ Export as JSON (full snapshot)
+                </button>
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {/* ── DISPLAY TAB ────────────────────────────────────── */}
+        {activeTab === "display" && (
+          <div style={S.grid2}>
+            <div style={S.col}>
+              <Card title="3D Visualisation Layers" accent="#00d4ff" onReset={() => handleReset("display")}>
+                <Toggle label="Oil Film Layer"     color="#d4a017" val={display.showOilLayer}      on={() => setDisplay(p => ({ ...p, showOilLayer: !p.showOilLayer }))} />
+                <Toggle label="Sludge Zone"        color="#8c5a2a" val={display.showSludge}         on={() => setDisplay(p => ({ ...p, showSludge: !p.showSludge }))} />
+                <Toggle label="Drift Monitor Ring" color="#ffdb58" val={display.showDriftRing}      on={() => setDisplay(p => ({ ...p, showDriftRing: !p.showDriftRing }))} />
+                <Toggle label="Live Sparklines"    color="#00d4ff" val={display.showSparklines}     on={() => setDisplay(p => ({ ...p, showSparklines: !p.showSparklines }))} />
+                <Toggle label="Phase Timeline"     color="#c084fc" val={display.showPhaseTimeline}  on={() => setDisplay(p => ({ ...p, showPhaseTimeline: !p.showPhaseTimeline }))} />
+              </Card>
+
+              <Card title="Camera & Optics" accent="#c084fc">
+                <SliderField label="Field of View" value={display.cameraFOV} min={25} max={75} step={1} unit="°"
+                  onChange={v => setDisplay(p => ({ ...p, cameraFOV: v }))} color="#c084fc" />
+              </Card>
+            </div>
+
+            <div style={S.col}>
+              <Card title="Performance" accent="#ffdb58">
+                <SliderField label="Animation Speed" value={display.animationSpeed} min={0.25} max={2.5} step={0.05} unit="×"
+                  onChange={v => setDisplay(p => ({ ...p, animationSpeed: v }))} color="#ffdb58"
+                  marks={[{ v: 0.5, l: "Slow" }, { v: 1, l: "1×" }, { v: 2, l: "Fast" }]} />
+                <SliderField label="Particle Density" value={display.particleDensity} min={10} max={200} step={5} unit="%"
+                  onChange={v => setDisplay(p => ({ ...p, particleDensity: v }))} color="#00d4ff"
+                  marks={[{ v: 50, l: "Light" }, { v: 100, l: "Default" }, { v: 175, l: "Heavy" }]} />
+                <div style={{ marginTop: 10, padding: "8px 10px", background: "#071828", borderRadius: 6, fontSize: 10, color: "#4a7090", fontFamily: "monospace" }}>
+                  ⚡ High particle density may reduce performance on low-end devices.
+                </div>
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {/* ── SESSION TAB ────────────────────────────────────── */}
+        {activeTab === "session" && (
+          <div style={S.grid2}>
+            <div style={S.col}>
+              <Card title="Session Behaviour" accent="#00ff9d" onReset={() => handleReset("session")}>
+                <NumField label="Samples required per cycle" value={sessionCfg.samplesRequired} min={1} max={50} step={1} unit=""
+                  onChange={v => setSessionCfg(p => ({ ...p, samplesRequired: v }))} color="#00ff9d" />
+                <NumField label="Cycle timeout" value={sessionCfg.cycleTimeoutSeconds} min={10} max={600} step={5} unit=" s"
+                  onChange={v => setSessionCfg(p => ({ ...p, cycleTimeoutSeconds: v }))} color="#ffdb58" />
+                <NumField label="Log retention (cycles)" value={sessionCfg.logRetentionCycles} min={5} max={200} step={5} unit=""
+                  onChange={v => setSessionCfg(p => ({ ...p, logRetentionCycles: v }))} color="#c084fc" />
+              </Card>
+
+              <Card title="Alerts & Automation" accent="#ffdb58">
+                <Toggle label="Auto-export on cycle complete"  color="#00ff9d" val={sessionCfg.autoExportOnComplete} on={() => setSessionCfg(p => ({ ...p, autoExportOnComplete: !p.autoExportOnComplete }))} />
+                <Toggle label="Alert on bracket change"        color="#ffdb58" val={sessionCfg.alertOnBracketChange} on={() => setSessionCfg(p => ({ ...p, alertOnBracketChange: !p.alertOnBracketChange }))} />
+              </Card>
+            </div>
+
+            <div style={S.col}>
+              <Card title="Current Session" accent="#00d4ff">
+                <InfoRow label="Session active"   value={session.active ? "Yes" : "No"}          dot={session.active ? "#00ff9d" : "#ff3f5a"} />
+                <InfoRow label="Completed"        value={session.completed ? "Yes" : "No"}        dot={session.completed ? "#00ff9d" : "#4a7090"} />
+                <InfoRow label="Samples collected" value={`${session.collected} / ${session.required}`} />
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5, fontSize:11, color:"#4a7090" }}>
+                    <span>Collection progress</span>
+                    <span style={{ fontFamily:"monospace", color:"#00d4ff" }}>{Math.round(session.collected / session.required * 100)}%</span>
+                  </div>
+                  <div style={{ height: 6, background: "#071828", borderRadius: 99, overflow: "hidden" }}>
+                    <div style={{ height:"100%", width: `${session.collected / session.required * 100}%`, background: "linear-gradient(90deg, #00d4ff, #00ff9d)", borderRadius: 99, transition: "width 0.5s" }} />
+                  </div>
+                </div>
+              </Card>
+
+              <Card title="Danger Zone" accent="#ff3f5a">
+                <p style={{ fontSize: 11, color: "#4a7090", marginBottom: 12, fontFamily: "monospace", lineHeight: 1.6 }}>
+                  These actions affect stored settings and cannot be undone.
+                </p>
+                <button className="btn-danger" onClick={() => { handleReset("thresholds"); handleReset("display"); handleReset("session"); handleReset("calibration"); }}>
+                  ↺ Reset ALL settings to default
+                </button>
+                <button className="btn-danger" style={{ marginTop: 6 }} onClick={() => { localStorage.removeItem(STORAGE_KEY); window.location.reload(); }}>
+                  ✕ Clear saved settings & reload
+                </button>
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {/* ── DIAGNOSTICS TAB ────────────────────────────────── */}
+        {activeTab === "diagnostics" && (
+          <div style={S.grid2}>
+            <div style={S.col}>
+              <Card title="Backend Connectivity" accent="#00d4ff">
+                <InfoRow label="URL" value="water-quality-backend-10-kijx.onrender.com" />
+                <InfoRow label="Status" value={backendConnected ? "Online" : "Offline"} dot={backendConnected ? "#00ff9d" : "#ff3f5a"} />
+                <InfoRow label="Protocol" value="HTTPS" />
+                <InfoRow label="Endpoint" value="/session/status" />
+                <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+                  <button className="btn-outline" onClick={pingBackend} disabled={pingLoading}>
+                    {pingLoading ? "⟳ Pinging…" : "⚡ Ping backend"}
+                  </button>
+                  <button className="btn-outline" onClick={copyBackendURL}>
+                    ⎘ Copy URL
+                  </button>
+                </div>
+                {pingResult && (
+                  <div style={{ marginTop: 10, padding: "8px 12px", background: pingResult.startsWith("✓") ? "#00ff9d0a" : "#ff3f5a0a", border: `1px solid ${pingResult.startsWith("✓") ? "#00ff9d33" : "#ff3f5a33"}`, borderRadius: 6, fontFamily: "monospace", fontSize: 11, color: pingResult.startsWith("✓") ? "#00ff9d" : "#ff3f5a" }}>
+                    {pingResult}
+                  </div>
+                )}
+              </Card>
+
+              <Card title="Browser Environment" accent="#c084fc">
+                <InfoRow label="User Agent"   value={navigator.userAgent.slice(0,40) + "…"} />
+                <InfoRow label="Language"     value={navigator.language} />
+                <InfoRow label="Online"       value={navigator.onLine ? "Yes" : "No"} dot={navigator.onLine ? "#00ff9d" : "#ff3f5a"} />
+                <InfoRow label="Cookies"      value={navigator.cookieEnabled ? "Enabled" : "Disabled"} />
+                <InfoRow label="Storage"      value={typeof localStorage !== "undefined" ? "Available" : "Unavailable"} dot={typeof localStorage !== "undefined" ? "#00ff9d" : "#ff3f5a"} />
+                <InfoRow label="WebGL"        value={(() => { try { const c = document.createElement("canvas"); return c.getContext("webgl2") ? "WebGL 2" : c.getContext("webgl") ? "WebGL 1" : "None"; } catch { return "Unknown"; } })()} />
+              </Card>
+            </div>
+
+            <div style={S.col}>
+              <Card title="Settings Storage" accent="#ffdb58">
+                <InfoRow label="Storage key"    value={STORAGE_KEY} />
+                <InfoRow label="Saved"          value={localStorage.getItem(STORAGE_KEY) ? "Yes" : "No"} dot={localStorage.getItem(STORAGE_KEY) ? "#00ff9d" : "#4a7090"} />
+                <InfoRow label="Approx. size"   value={`${(localStorage.getItem(STORAGE_KEY)?.length ?? 0)} chars`} />
+                <InfoRow label="LocalStorage quota" value="~5MB (browser limit)" />
+                <div style={{ marginTop: 12 }}>
+                  <button className="btn-outline-full" onClick={() => {
+                    const raw = localStorage.getItem(STORAGE_KEY);
+                    const blob = new Blob([raw ?? "{}"], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a"); a.href = url; a.download = "wateriq-localstorage-dump.json"; a.click(); URL.revokeObjectURL(url);
+                  }}>
+                    ⬇ Dump raw localStorage entry
+                  </button>
+                </div>
+              </Card>
+
+              <Card title="Sensor Self-Test" accent="#00ff9d">
+                <p style={{ fontSize: 11, color: "#4a7090", marginBottom: 12, fontFamily: "monospace", lineHeight: 1.6 }}>
+                  Triggers a mock sensor read and validates output against current thresholds.
+                </p>
+                <SelfTest thresholds={thresholds} calibration={calibration} />
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {/* ── ABOUT TAB ──────────────────────────────────────── */}
+        {activeTab === "about" && (
+          <div style={{ maxWidth: 620 }}>
+            <Card title="About WaterIQ" accent="#00d4ff">
+              <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:18 }}>
+                <div style={{ width:44, height:44, borderRadius:"50%", background:"linear-gradient(135deg,#00d4ff22,#00ff9d22)", border:"1px solid #00d4ff44", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>💧</div>
+                <div>
+                  <div style={{ fontFamily:"'Orbitron',monospace", fontWeight:900, fontSize:18, color:"#c8e8f8" }}>Water<span style={{color:"#00d4ff"}}>IQ</span></div>
+                  <div style={{ fontSize:11, color:"#2a5070", fontFamily:"monospace" }}>Advanced Greywater Separation System · v5.0</div>
+                </div>
+              </div>
+              <InfoRow label="Version"      value="5.0.0" />
+              <InfoRow label="Build target" value="Academic / experimental" />
+              <InfoRow label="Hardware"     value="ESP32 + analog sensors" />
+              <InfoRow label="Backend"      value="Render.com hosted API" />
+              <InfoRow label="Frontend"     value="React + TypeScript" />
+              <InfoRow label="3D engine"    value="Three.js r128" />
+            </Card>
+
+            <Card title="Decision Logic" accent="#00ff9d">
+              <p style={{ fontSize:12, color:"#8ab0c8", lineHeight:1.7, marginBottom:10 }}>
+                Water classification uses averaged batch readings of pH, turbidity, and TDS
+                collected during an active live session. Five filtration brackets (F1–F5) are
+                evaluated in order — the first match wins and determines routing.
+              </p>
+              <InfoRow label="F1" value="pH 6.5–8.5, Turb < 2 NTU, TDS < 200 mg/L → Tank A" />
+              <InfoRow label="F2" value="Turb < 4 NTU, TDS < 300 mg/L → Tank A" />
+              <InfoRow label="F3" value="Turb < 8 NTU, TDS < 500 mg/L → Tank B" />
+              <InfoRow label="F4" value="TDS < 800 mg/L → Tank B" />
+              <InfoRow label="F5" value="TDS ≥ 800 mg/L → Tank B (severe)" />
+            </Card>
+
+            <Card title="Safety Disclaimer" accent="#ff3f5a">
+              <p style={{ fontSize:12, color:"#8ab0c8", lineHeight:1.7 }}>
+                This system is intended for <strong style={{color:"#ffdb58"}}>academic, experimental, and controlled
+                environments only</strong>. It must not be used as a sole decision-making system
+                for potable water supply or critical industrial operations. Always verify
+                water quality with certified laboratory methods before human consumption.
+              </p>
+            </Card>
+          </div>
+        )}
+
+      </div>
+    </div>
   );
 }
 
-// ─── Scoped CSS ───────────────────────────────────────────────────────────────
+// ─── SUB-COMPONENTS ───────────────────────────────────────────
+
+function Card({ title, accent, children, onReset }: { title: string; accent: string; children: React.ReactNode; onReset?: () => void }) {
+  return (
+    <div style={{ background: "#030c16", border: `1px solid #071828`, borderTop: `2px solid ${accent}44`, borderRadius: 10, padding: "16px 18px", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <span style={{ fontFamily: "monospace", fontSize: 10, fontWeight: 700, color: accent, letterSpacing: "0.18em", textTransform: "uppercase" }}>{title}</span>
+        {onReset && <button onClick={onReset} style={{ background: "transparent", border: "none", color: "#1a3a5a", fontSize: 10, cursor: "pointer", fontFamily: "monospace" }}>↺ reset</button>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function StatChip({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{ flex: 1, background: color + "0e", border: `1px solid ${color}33`, borderRadius: 6, padding: "6px 10px", textAlign: "center" }}>
+      <div style={{ fontSize: 8, color: "#2a5070", fontFamily: "monospace", letterSpacing: "0.12em" }}>{label}</div>
+      <div style={{ fontSize: 11, fontWeight: 700, color, fontFamily: "monospace", marginTop: 2 }}>{value}</div>
+    </div>
+  );
+}
+
+function InfoRow({ label, value, dot }: { label: string; value: string; dot?: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #071828" }}>
+      <span style={{ fontSize: 11, color: "#4a7090", fontFamily: "monospace" }}>{label}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {dot && <div style={{ width: 6, height: 6, borderRadius: "50%", background: dot, boxShadow: `0 0 6px ${dot}88`, flexShrink: 0 }} />}
+        <span style={{ fontSize: 11, color: "#8ab0c8", fontFamily: "monospace", textAlign: "right", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
+      </div>
+    </div>
+  );
+}
+
+function RangeBar({ lo, hi, min, max, color, label }: { lo: number; hi: number; min: number; max: number; color: string; label: string }) {
+  const total = max - min;
+  const left = ((lo - min) / total) * 100;
+  const width = ((hi - lo) / total) * 100;
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 10, color: "#2a5070", fontFamily: "monospace", marginBottom: 4 }}>{label}</div>
+      <div style={{ height: 6, background: "#071828", borderRadius: 99, position: "relative", overflow: "hidden" }}>
+        <div style={{ position: "absolute", top: 0, left: `${left}%`, width: `${width}%`, height: "100%", background: color, borderRadius: 99, opacity: 0.7 }} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#1a3a5a", fontFamily: "monospace", marginTop: 2 }}>
+        <span>{min}</span><span>{max}</span>
+      </div>
+    </div>
+  );
+}
+
+function NumField({ label, value, min, max, step, unit, onChange, color, showSign }: {
+  label: string; value: number; min: number; max: number; step: number;
+  unit: string; onChange: (v: number) => void; color: string; showSign?: boolean;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+      <span style={{ flex: 1, fontSize: 11, color: "#4a7090", fontFamily: "monospace" }}>{label}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 0, background: "#071828", border: `1px solid ${color}33`, borderRadius: 6, overflow: "hidden" }}>
+        <button onClick={() => onChange(Math.max(min, +(value - step).toFixed(10)))}
+          style={{ background: "transparent", border: "none", color, cursor: "pointer", padding: "5px 10px", fontSize: 14, lineHeight: 1 }}>−</button>
+        <input
+          type="number" min={min} max={max} step={step} value={value}
+          onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v)) onChange(Math.max(min, Math.min(max, v))); }}
+          style={{ width: 72, background: "transparent", border: "none", color, fontFamily: "monospace", fontSize: 12, fontWeight: 700, textAlign: "center", outline: "none", padding: "5px 0" }}
+        />
+        <span style={{ fontSize: 10, color: color + "88", paddingRight: 8, fontFamily: "monospace" }}>{unit}</span>
+        <button onClick={() => onChange(Math.min(max, +(value + step).toFixed(10)))}
+          style={{ background: "transparent", border: "none", color, cursor: "pointer", padding: "5px 10px", fontSize: 14, lineHeight: 1 }}>+</button>
+      </div>
+    </div>
+  );
+}
+
+function SliderField({ label, value, min, max, step, unit, onChange, color, marks }: {
+  label: string; value: number; min: number; max: number; step: number;
+  unit: string; onChange: (v: number) => void; color: string;
+  marks?: { v: number; l: string }[];
+}) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 11 }}>
+        <span style={{ color: "#4a7090", fontFamily: "monospace" }}>{label}</span>
+        <span style={{ color, fontFamily: "monospace", fontWeight: 700 }}>{value}{unit}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value}
+        onChange={e => onChange(parseFloat(e.target.value))}
+        className="slider" style={{ "--sc": color } as any} />
+      {marks && (
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 3 }}>
+          {marks.map(m => (
+            <span key={m.l} onClick={() => onChange(m.v)}
+              style={{ fontSize: 9, color: Math.abs(value - m.v) < step * 2 ? color : "#1a3a5a", fontFamily: "monospace", cursor: "pointer" }}>
+              {m.l}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Toggle({ label, color, val, on }: { label: string; color: string; val: boolean; on: () => void }) {
+  return (
+    <div onClick={on} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", cursor: "pointer", userSelect: "none", borderBottom: "1px solid #071828" }}>
+      <span style={{ fontSize: 12, color: val ? "#c8e8f8" : "#2a4a6a", transition: "color 0.2s" }}>{label}</span>
+      <div style={{ width: 36, height: 20, borderRadius: 99, border: `1.5px solid ${val ? color : "#0d2235"}`, background: val ? color + "25" : "transparent", position: "relative", transition: "all 0.2s", flexShrink: 0 }}>
+        <div style={{ position: "absolute", top: 3, left: val ? 18 : 3, width: 12, height: 12, borderRadius: "50%", background: val ? color : "#1a3a5a", transition: "left 0.2s, background 0.2s", boxShadow: val ? `0 0 8px ${color}` : "none" }} />
+      </div>
+    </div>
+  );
+}
+
+function SelfTest({ thresholds, calibration }: { thresholds: SensorThresholds; calibration: CalibrationOffsets }) {
+  const [result, setResult] = useState<null | { pass: boolean; readings: any; bracket: string; notes: string[] }>(null);
+  const run = () => {
+    const raw = { ph: 7.1, turbidity: 1.5, tds: 185, orp: 310, nh3: 0.3 };
+    const r = {
+      ph:        +(raw.ph        + calibration.ph       ).toFixed(2),
+      turbidity: +(raw.turbidity + calibration.turbidity).toFixed(2),
+      tds:       +(raw.tds       + calibration.tds      ).toFixed(0),
+      orp:       +(raw.orp       + calibration.orp      ).toFixed(0),
+      nh3:       +(raw.nh3       + calibration.nh3      ).toFixed(2),
+    };
+    const notes: string[] = [];
+    if (r.ph < thresholds.phMin || r.ph > thresholds.phMax) notes.push(`⚠ pH ${r.ph} outside safe range [${thresholds.phMin}–${thresholds.phMax}]`);
+    if (r.orp < thresholds.orpMin) notes.push(`⚠ ORP ${r.orp} mV below minimum ${thresholds.orpMin} mV`);
+    if (r.nh3 > thresholds.nh3Max) notes.push(`⚠ NH₃ ${r.nh3} exceeds max ${thresholds.nh3Max}`);
+    const bracket = r.turbidity < thresholds.turbidityF1 && r.tds < 200 ? "F1"
+      : r.turbidity < thresholds.turbidityF2 && r.tds < 300 ? "F2"
+      : r.turbidity < thresholds.turbidityF3 && r.tds < 500 ? "F3"
+      : r.tds < thresholds.tdsSevere ? "F4" : "F5";
+    setResult({ pass: notes.length === 0, readings: r, bracket, notes });
+  };
+  return (
+    <div>
+      <button className="btn-outline-full" onClick={run}>▷ Run mock sensor test</button>
+      {result && (
+        <div style={{ marginTop: 10, padding: "10px 12px", background: result.pass ? "#00ff9d0a" : "#ffdb580a", border: `1px solid ${result.pass ? "#00ff9d33" : "#ffdb5844"}`, borderRadius: 7 }}>
+          <div style={{ fontFamily: "monospace", fontSize: 11, color: result.pass ? "#00ff9d" : "#ffdb58", marginBottom: 6, fontWeight: 700 }}>
+            {result.pass ? "✓ All sensors nominal" : "⚠ Threshold warnings"}  ·  Bracket: <span style={{ color: "#c084fc" }}>{result.bracket}</span>
+          </div>
+          {(["ph","turbidity","tds","orp","nh3"] as const).map(k => (
+            <div key={k} style={{ display:"flex", gap:8, fontSize:10, color:"#4a7090", fontFamily:"monospace", padding:"2px 0" }}>
+              <span style={{ minWidth:70 }}>{k.toUpperCase()}</span>
+              <span style={{ color:"#8ab0c8" }}>{result.readings[k]}</span>
+            </div>
+          ))}
+          {result.notes.map((n,i) => <div key={i} style={{ marginTop:4, fontSize:10, color:"#ffdb58", fontFamily:"monospace" }}>{n}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── STYLES ───────────────────────────────────────────────────
+const S: Record<string, React.CSSProperties> = {
+  root: { width: "100%", height: "100vh", background: "#020b14", display: "flex", flexDirection: "column", fontFamily: "'Rajdhani',sans-serif", color: "#c8e8f8", overflow: "hidden" },
+  header: { height: 56, background: "linear-gradient(90deg,#020b14,#030e1a 40%,#020b14)", borderBottom: "1px solid #071828", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", flexShrink: 0, gap: 16 },
+  headerLeft: { display: "flex", alignItems: "center", gap: 10 },
+  headerDot: { width: 8, height: 8, borderRadius: "50%", background: "#00ff9d", boxShadow: "0 0 14px #00ff9d" },
+  headerTitle: { fontFamily: "'Orbitron',monospace", fontWeight: 900, fontSize: 18, letterSpacing: "0.04em", color: "#c8e8f8" },
+  headerSep: { color: "#071828", fontSize: 18 },
+  headerSub: { fontSize: 13, color: "#2a5070", fontFamily: "monospace" },
+  headerRight: { display: "flex", alignItems: "center", gap: 8 },
+  tabBar: { display: "flex", borderBottom: "1px solid #071828", background: "#030c16", flexShrink: 0, padding: "0 24px" },
+  content: { flex: 1, overflowY: "auto", padding: "24px 24px", background: "#020b14" },
+  grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" },
+  col: { display: "flex", flexDirection: "column" },
+};
+
 const CSS = `
-.settings-layout {
-  display: grid;
-  grid-template-columns: 168px 1fr 196px;
-  gap: 12px;
-  align-items: start;
-}
-@media (max-width: 1100px) {
-  .settings-layout { grid-template-columns: 1fr 196px; }
-  .settings-leftnav { display: none !important; }
-}
-@media (max-width: 768px) {
-  .settings-layout { grid-template-columns: 1fr; }
-  .settings-leftnav { display: none !important; }
-}
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;600;700&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0;}
+  ::-webkit-scrollbar{width:4px;} ::-webkit-scrollbar-track{background:transparent;} ::-webkit-scrollbar-thumb{background:#0d2235;border-radius:2px;}
 
-.settings-leftnav {
-  position: sticky; top: 68px;
-  background: var(--bg-glass); border: 1px solid var(--border);
-  border-radius: var(--r-xl); overflow: hidden;
-  backdrop-filter: blur(var(--glass-blur));
-  box-shadow: var(--glass-shadow); padding: 6px 0;
-}
+  .tab-btn{padding:12px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:#1a4060;font-family:monospace;font-size:10px;font-weight:700;cursor:pointer;letter-spacing:0.1em;transition:all 0.2s;white-space:nowrap;}
+  .tab-btn:hover{color:#4a7090;}
+  .tab-active{color:#00d4ff !important;border-bottom-color:#00d4ff !important;background:#00d4ff08;}
 
-.settings-mobiletabs {
-  display: none; flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding-bottom: 10px;
-  scrollbar-width: none;
-}
-.settings-mobiletabs::-webkit-scrollbar { display: none; }
-@media (max-width: 1100px) { .settings-mobiletabs { display: flex !important; } }
+  .btn-save{padding:9px 20px;border-radius:6px;border:1px solid #00d4ff66;background:linear-gradient(135deg,#00d4ff0d,#00ff9d0d);color:#00d4ff;font-family:monospace;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.2s;}
+  .btn-save:hover{background:linear-gradient(135deg,#00d4ff1a,#00ff9d1a);box-shadow:0 0 18px #00d4ff22;}
+  .btn-saved{padding:9px 20px;border-radius:6px;border:1px solid #00ff9d66;background:#00ff9d0d;color:#00ff9d;font-family:monospace;font-size:11px;font-weight:700;cursor:default;}
+  .btn-error{padding:9px 20px;border-radius:6px;border:1px solid #ff3f5a66;background:#ff3f5a0d;color:#ff3f5a;font-family:monospace;font-size:11px;font-weight:700;cursor:default;}
+  .btn-ghost{padding:8px 14px;border-radius:6px;border:1px solid #071828;background:transparent;color:#2a5070;font-family:monospace;font-size:10px;font-weight:700;cursor:pointer;transition:all 0.2s;}
+  .btn-ghost:hover{color:#4a7090;border-color:#0d2235;}
+  .btn-outline{padding:7px 14px;border-radius:6px;border:1px solid #0d2235;background:transparent;color:#4a7090;font-family:monospace;font-size:10px;font-weight:700;cursor:pointer;transition:all 0.2s;}
+  .btn-outline:hover:not(:disabled){border-color:#00d4ff44;color:#00d4ff;}
+  .btn-outline:disabled{opacity:0.4;cursor:not-allowed;}
+  .btn-outline-full{width:100%;padding:9px;border-radius:6px;border:1px solid #0d2235;background:transparent;color:#4a7090;font-family:monospace;font-size:10px;font-weight:700;cursor:pointer;transition:all 0.2s;text-align:center;}
+  .btn-outline-full:hover{border-color:#00d4ff44;color:#00d4ff;}
+  .btn-danger{width:100%;padding:9px;border-radius:6px;border:1px solid #ff3f5a33;background:transparent;color:#ff3f5a;font-family:monospace;font-size:10px;font-weight:700;cursor:pointer;transition:all 0.2s;}
+  .btn-danger:hover{background:#ff3f5a0e;border-color:#ff3f5a66;}
 
-.settings-center { display: flex; flex-direction: column; gap: 10px; }
-
-/* Section blocks */
-.s-block {
-  padding: 16px;
-  border-bottom: 1px solid var(--border);
-}
-.s-block:last-child { border-bottom: none; }
-.s-label {
-  font-family: var(--f-heading); font-size: 10px; font-weight: 700;
-  letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-secondary);
-  margin-bottom: 10px; display: block;
-}
-
-/* Slider thumb */
-input[type=range]::-webkit-slider-thumb {
-  appearance: none; width: 14px; height: 14px;
-  border-radius: 50%; background: var(--cyan);
-  border: 2px solid var(--bg-deep);
-  box-shadow: 0 0 8px rgba(0,212,255,0.5);
-  cursor: pointer;
-}
-input[type=range]::-moz-range-thumb {
-  width: 14px; height: 14px; border-radius: 50%; background: var(--cyan);
-  border: 2px solid var(--bg-deep); box-shadow: 0 0 8px rgba(0,212,255,0.5); cursor: pointer;
-}
-
-/* Toast */
-.wiq-toast {
-  position: fixed; bottom: calc(var(--nav-h) + 16px); left: 50%; transform: translateX(-50%);
-  background: rgba(5,18,38,0.97); border: 1px solid var(--border-mid); border-radius: 20px;
-  padding: 8px 18px; font-family: var(--f-mono); font-size: 11px; color: var(--text-primary);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,212,255,0.08);
-  z-index: 9999; animation: fadeUp 0.3s ease; backdrop-filter: blur(20px); white-space: nowrap;
-}
+  input[type=range].slider{width:100%;-webkit-appearance:none;height:3px;border-radius:99px;background:#071828;cursor:pointer;outline:none;}
+  input[type=range].slider::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--sc,#00d4ff);border:2px solid var(--sc,#00d4ff);box-shadow:0 0 8px var(--sc,#00d4ff);cursor:pointer;transition:transform 0.15s;}
+  input[type=range].slider::-webkit-slider-thumb:hover{transform:scale(1.4);}
+  input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;}
 `;
