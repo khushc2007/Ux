@@ -1308,12 +1308,23 @@ const CSS = `
   .settings-leftnav { display: none !important; }
 }
 @media (max-width: 768px) {
-  .settings-layout { grid-template-columns: 1fr; }
+  .settings-layout { grid-template-columns: 1fr !important; }
   .settings-leftnav { display: none !important; }
-  .settings-mobiletabs { display: flex !important; }
   .settings-rightpanel { display: none !important; }
-  .g-card { border-radius: var(--r-lg); }
+  .settings-mobiletabs { display: flex !important; flex-wrap: nowrap; overflow-x: auto; }
+  .settings-center { min-width: 0; width: 100%; overflow-x: hidden; }
+  .g-card { border-radius: 10px; }
+  /* Ensure all content fits within mobile viewport */
+  .s-block { padding: 12px !important; }
+  .s-block input, .s-block select, .s-block textarea { max-width: 100% !important; box-sizing: border-box !important; }
+  /* Stack any flex rows that overflow */
+  .s-row-wrap { flex-wrap: wrap !important; }
+  /* Prevent any element from overflowing */
+  .settings-center * { max-width: 100%; }
+  /* Fix page padding for mobile */
   .page { padding-left: 8px !important; padding-right: 8px !important; }
+  /* Tank SVG should not overflow */
+  svg { max-width: 100% !important; height: auto !important; }
 }
 
 .settings-leftnav {
@@ -1331,7 +1342,7 @@ const CSS = `
 .settings-mobiletabs::-webkit-scrollbar { display: none; }
 @media (max-width: 1100px) { .settings-mobiletabs { display: flex !important; } }
 
-.settings-center { display: flex; flex-direction: column; gap: 10px; }
+.settings-center { display: flex; flex-direction: column; gap: 10px; min-width: 0; overflow-x: hidden; }
 
 /* Section blocks */
 .s-block {
