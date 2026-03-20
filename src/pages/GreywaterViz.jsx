@@ -1060,16 +1060,30 @@ export default function GreywaterViz() {
     };
   });
 
-  // Mount scene once; also clear any pending cycle timers on unmount
+  // Mount scene — wait until canvas has real pixel dimensions before init
   useEffect(() => {
     const canvas = canvasRef.current;
     const mobile = window.innerWidth < 768;
     let cleanupScene = null;
-    const tid = setTimeout(() => {
+    let started = false;
+
+    function tryStart() {
+      if (started) return;
+      const w = canvas.offsetWidth || canvas.parentElement?.offsetWidth || 0;
+      const h = canvas.offsetHeight || canvas.parentElement?.offsetHeight || 0;
+      if (w < 10 || h < 10) return; // still zero — wait
+      started = true;
+      ro.disconnect();
       cleanupScene = buildScene(canvas, () => stateRef.current, mobile);
-    }, mobile ? 100 : 0);
+    }
+
+    // ResizeObserver fires as soon as the element gets a real size
+    const ro = new ResizeObserver(tryStart);
+    ro.observe(canvas.parentElement || canvas);
+    tryStart(); // also try immediately in case size is already known
+
     return () => {
-      clearTimeout(tid);
+      ro.disconnect();
       if (cleanupScene) cleanupScene();
       cycleTimers.current.forEach(id => clearTimeout(id));
       cycleTimers.current = [];
