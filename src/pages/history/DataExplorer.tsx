@@ -47,7 +47,7 @@ const ExpandedDetail = memo(({ item }: { item: NormIteration }) => {
     (window as any).anime({
       targets: ref.current,
       translateY: [-10, 0],
-      opacity: [0, 1],
+      opacity: [0.9, 1],
       duration: 320,
       easing: "easeOutExpo",
     });
@@ -56,7 +56,7 @@ const ExpandedDetail = memo(({ item }: { item: NormIteration }) => {
   return (
     <div ref={ref} style={{
       background: "#040b16", borderTop: "1px solid #0f2236",
-      padding: "14px 16px", opacity: 0,
+      padding: "14px 16px", opacity: 1,
     }}>
       {/* Sparklines */}
       <div style={{ display: "flex", gap: 20, marginBottom: 14, flexWrap: "wrap" }}>
@@ -203,7 +203,7 @@ export const DataExplorer = memo(({
     visible.forEach((item, i) => {
       const el = rowRefs.current.get(item.id);
       if (!el) return;
-      a({ targets: el, opacity: [0, 1], translateX: [-6, 0], delay: i * 12, duration: 200, easing: "easeOutQuad" });
+      a({ targets: el, opacity: [0.9, 1], translateX: [-6, 0], delay: i * 12, duration: 200, easing: "easeOutQuad" });
     });
   }, [startIdx]); // eslint-disable-line
 
