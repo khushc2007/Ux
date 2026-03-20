@@ -177,7 +177,7 @@ function buildScene(canvas, getState, isMob = false) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
   renderer.setPixelRatio(isMob ? Math.min(window.devicePixelRatio, 1) : Math.min(window.devicePixelRatio, 2));
   const getW = () => canvas.clientWidth  || canvas.parentElement?.clientWidth  || window.innerWidth;
-  const getH = () => canvas.clientHeight || canvas.parentElement?.clientHeight || Math.round(window.innerHeight * 0.7);
+  const getH = () => canvas.clientHeight || canvas.parentElement?.clientHeight || (window.innerHeight - 120);
   renderer.setSize(getW(), getH());
   renderer.shadowMap.enabled = !isMob;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -1298,10 +1298,10 @@ export default function GreywaterViz() {
 
       {/* ── BODY ───────────────────────────────────────────── */}
       {isMobile ? (
-        /* ══ MOBILE — fullscreen canvas only, zero panel overhead ══ */
-        <div style={{ flex: 1, position: "relative", overflow: "hidden", background: "#020b14" }}>
+        /* ══ MOBILE — fixed fullscreen canvas, bypasses layout height chain ══ */
+        <div style={{ position: "fixed", top: 52, left: 0, right: 0, bottom: "var(--nav-h, 68px)", background: "#020b14", zIndex: 1 }}>
 
-          {/* Canvas fills 100% */}
+          {/* Canvas fills the fixed container */}
           <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", touchAction: "none", userSelect: "none" }} />
 
           {/* Phase dots — top left */}
