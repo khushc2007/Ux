@@ -112,8 +112,8 @@ export const AnalyticsSummary = memo(({
     const a = (window as any).anime;
     a({
       targets: rowRef.current.children,
-      translateY: [24, 0],
-      opacity: [0, 1],
+      translateY: [4, 0],
+      opacity: [0.9, 1],
       delay: a.stagger(60),
       duration: 650,
       easing: "easeOutExpo",
