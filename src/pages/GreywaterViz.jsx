@@ -1418,6 +1418,7 @@ export default function GreywaterViz() {
         </div>
       )}
     </div>
+    </>
   );
 
   // ─── RENDER FUNCTIONS (extracted for mobile/desktop reuse) ───
@@ -1809,6 +1810,5 @@ function TLvl({ label, sub, level, col }) {
       </div>
       <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 11, fontWeight: 700, color: col }}>{Math.round(level * 100)}%</div>
     </div>
-    </>
   );
 }
