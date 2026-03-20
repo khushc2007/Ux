@@ -290,9 +290,7 @@ export default function HistoryPage() {
         {/* ═══════════════════════════════════════
             HEADER BAR
         ═══════════════════════════════════════ */}
-        <div style={{
-          className="history-header"
-        }} style={{
+       <div className="history-header" style={{
           background: "#030b17",
           borderBottom: "1px solid #0f2236",
           padding: "12px 28px",
