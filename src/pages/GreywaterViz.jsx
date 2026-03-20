@@ -176,14 +176,17 @@ const _tmpColor = new THREE.Color();
 function buildScene(canvas, getState, isMob = false) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
   renderer.setPixelRatio(isMob ? Math.min(window.devicePixelRatio, 1) : Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+  // Robust size: canvas may report 0 on first paint on mobile
+  const getW = () => canvas.clientWidth  || canvas.parentElement?.clientWidth  || window.innerWidth;
+  const getH = () => canvas.clientHeight || canvas.parentElement?.clientHeight || (window.innerHeight - 200);
+  renderer.setSize(getW(), getH());
   renderer.shadowMap.enabled = !isMob;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = isMob ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.25;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-  const camera = new THREE.PerspectiveCamera(40, canvas.clientWidth / canvas.clientHeight, 0.1, 120);
+  const camera = new THREE.PerspectiveCamera(40, getW() / getH(), 0.1, 120);
   camera.position.set(6.2, 3.8, 7.0);
   camera.lookAt(0, 0.3, 0);
 
@@ -946,10 +949,15 @@ function buildScene(canvas, getState, isMob = false) {
   }
 
   requestAnimationFrame(ts => { lastTime = ts; animate(ts); });
+  // Re-check size after 200ms in case mobile layout shifted
+  setTimeout(onResize, 200);
 
   function onResize() {
-    renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-    camera.aspect = canvas.clientWidth / canvas.clientHeight;
+    const rw = canvas.clientWidth  || canvas.parentElement?.clientWidth  || window.innerWidth;
+    const rh = canvas.clientHeight || canvas.parentElement?.clientHeight || (window.innerHeight - 200);
+    if (rw === 0 || rh === 0) return;
+    renderer.setSize(rw, rh);
+    camera.aspect = rw / rh;
     camera.updateProjectionMatrix();
   }
   window.addEventListener("resize", onResize);
@@ -1072,12 +1080,12 @@ export default function GreywaterViz() {
     const canvas = canvasRef.current;
     const mobile = window.innerWidth < 768;
     let cleanupScene = null;
-    // Defer one frame so canvas has real dimensions (critical on mobile)
-    const rafId = requestAnimationFrame(() => {
+    // Delay 80ms so mobile layout/flex settles before canvas gets dimensions
+    const timerId = setTimeout(() => {
       cleanupScene = buildScene(canvas, () => stateRef.current, mobile);
-    });
+    }, 80);
     return () => {
-      cancelAnimationFrame(rafId);
+      clearTimeout(timerId);
       if (cleanupScene) cleanupScene();
       cycleTimers.current.forEach(id => clearTimeout(id));
       cycleTimers.current = [];
