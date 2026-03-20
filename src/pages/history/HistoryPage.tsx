@@ -139,22 +139,18 @@ export default function HistoryPage() {
   const [animeReady, setAnimeReady] = useState(false);
   useAnimeJS(() => setAnimeReady(true));
 
-  const [rawIterations, setRawIterations] = useState<Iteration[]>([]);
-  const [filters, setFilters]             = useState<FilterState>(DEFAULT_FILTERS);
-  const clock  = useClock();
-  const uptime = useUptime();
-
-  /* ── Load localStorage ── */
-  useEffect(() => {
+  /* ── Load data synchronously so page renders with data immediately ── */
+  const [rawIterations, setRawIterations] = useState<Iteration[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]") as Iteration[];
-      // If empty OR if data is in old flat format (missing rows array), reseed
       const needsReseed = stored.length === 0 || !stored[0]?.rows;
       if (needsReseed) seedDemoData();
-      const reloaded = JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]") as Iteration[];
-      setRawIterations(reloaded);
-    } catch { setRawIterations([]); }
-  }, []);
+      return JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]") as Iteration[];
+    } catch { return []; }
+  });
+  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const clock  = useClock();
+  const uptime = useUptime();
 
   /* ── Normalise all iterations ── */
   const allNorm = useMemo(() => rawIterations.map(normalise), [rawIterations]);
@@ -290,7 +286,7 @@ export default function HistoryPage() {
         {/* ═══════════════════════════════════════
             HEADER BAR
         ═══════════════════════════════════════ */}
-       <div className="history-header" style={{
+        <div className="history-header" style={{
           background: "#030b17",
           borderBottom: "1px solid #0f2236",
           padding: "12px 28px",
