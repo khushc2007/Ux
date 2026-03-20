@@ -202,7 +202,7 @@ export default function HistoryPage() {
     if (!animeReady || !pageRef.current) return;
     (window as any).anime({
       targets: pageRef.current,
-      opacity: [0, 1],
+      opacity: [0.9, 1],
       duration: 500,
       easing: "easeOutExpo",
     });
