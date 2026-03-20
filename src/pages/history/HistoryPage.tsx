@@ -41,33 +41,64 @@ function useAnimeJS(onReady: () => void) {
   }, []); // eslint-disable-line
 }
 
-/* ── Demo data seeder ── */
+/* ── Demo data seeder — uses correct Iteration shape from historyTypes.ts ── */
 function seedDemoData() {
   const brackets = ["F1","F1","F2","F2","F2","F3","F4"];
-  const tanks = ["T1","T2","T3"];
-  const methods = ["Lamella + UV Stage 2","Sand Filter + Chlorination","Membrane Bioreactor","Reverse Osmosis Stage 1"];
+  const tanks    = ["T1","T2","T3"];
+  const modes: Array<"simulation"|"live"> = ["simulation","simulation","live"];
+  const sessionNames = [
+    "Morning Cycle","Afternoon Run","Pre-Treatment Pass","Post-Lamella Check",
+    "Night Cycle","UV Stage Verify","Emergency Flush","Routine Monitoring",
+    "High-Load Test","Baseline Calibration",
+  ];
   const now = Date.now();
+
   const iterations = Array.from({ length: 40 }, (_, i) => {
-    const bracket = brackets[Math.floor(Math.random() * brackets.length)];
+    const bracket  = brackets[Math.floor(Math.random() * brackets.length)];
     const reusable = bracket === "F1" || bracket === "F2" ? Math.random() > 0.1 : Math.random() > 0.6;
-    const wqiScore = bracket === "F1" ? 80 + Math.random()*15 : bracket === "F2" ? 65 + Math.random()*15 : bracket === "F3" ? 45 + Math.random()*20 : 25 + Math.random()*20;
-    const conf = reusable ? 0.75 + Math.random()*0.22 : 0.55 + Math.random()*0.25;
-    const ts = now - (39 - i) * (7 * 24 * 60 * 60 * 1000 / 40) + (Math.random() - 0.5) * 1800000;
+    const ts       = now - (39 - i) * (7 * 24 * 60 * 60 * 1000 / 40) + (Math.random() - 0.5) * 1800000;
+    const tank     = tanks[Math.floor(Math.random() * tanks.length)];
+    const mode     = modes[Math.floor(Math.random() * modes.length)];
+    const name     = sessionNames[i % sessionNames.length] + " #" + (i + 1);
+
+    // Generate 8-15 raw sensor rows
+    const rowCount = 8 + Math.floor(Math.random() * 8);
+    const basePh   = 6.5 + Math.random() * 2;
+    const baseTurb = 0.5 + Math.random() * 7;
+    const baseTds  = 150 + Math.random() * 550;
+
+    const rows = Array.from({ length: rowCount }, (_, j) => ({
+      slNo: j + 1,
+      time: new Date(ts + j * 1500).toISOString(),
+      ph:        +(basePh   + (Math.random() - 0.5) * 0.4).toFixed(2),
+      turbidity: +(baseTurb + (Math.random() - 0.5) * 1.2).toFixed(2),
+      tds:       +(baseTds  + (Math.random() - 0.5) * 40 ).toFixed(1),
+      source: mode as "simulation" | "live" | "stream",
+    }));
+
+    const avg = {
+      ph:        +(rows.reduce((s,r) => s + r.ph,        0) / rows.length).toFixed(3),
+      turbidity: +(rows.reduce((s,r) => s + r.turbidity, 0) / rows.length).toFixed(3),
+      tds:       +(rows.reduce((s,r) => s + r.tds,       0) / rows.length).toFixed(1),
+    };
+
     return {
-      id: `demo_${i}`,
+      id:        "demo_" + i,
+      name,
       timestamp: new Date(ts).toISOString(),
-      bracket,
-      reusable,
-      suggestedTank: tanks[Math.floor(Math.random() * tanks.length)],
-      filtrationMethod: methods[Math.floor(Math.random() * methods.length)],
-      wqi: { score: +wqiScore.toFixed(1), interpretation: wqiScore >= 80 ? "Excellent" : wqiScore >= 65 ? "Good" : wqiScore >= 50 ? "Fair" : "Poor", phContribution: +(wqiScore * 0.38).toFixed(1), turbidityContribution: +(wqiScore * 0.30).toFixed(1), tdsContribution: +(wqiScore * 0.32).toFixed(1) },
-      confidence: { score: +conf.toFixed(2), level: conf > 0.85 ? "high" : conf > 0.70 ? "medium" : "low", recommendation: reusable ? "proceed" : "re_run_cycle", disagreementFlags: conf < 0.7 ? ["turbidity_ph_divergence"] : [] },
-      flatline: { anyFlatlined: false, failsafeTriggered: false, ph: false, turbidity: false, tds: false },
-      recalibration: { triggered: Math.random() > 0.85, correctedTurbidity: null, originalTurbidity: null, reason: null },
-      cycleFingerprint: { anomalyScore: +(Math.random() * 0.4).toFixed(2), anomalyFlags: [], turbiditySlope: +((Math.random()-0.5)*0.08).toFixed(3), phSlope: +((Math.random()-0.5)*0.02).toFixed(3), tdsSlope: +((Math.random()-0.5)*3).toFixed(2), durationMs: 14000 + Math.floor(Math.random()*12000) },
-      readings: Array.from({ length: 12 }, (_, j) => ({ t: j * 1500, ph: 6.5 + Math.random()*2, turbidity: 0.5 + Math.random()*8, tds: 150 + Math.random()*600 })),
+      mode,
+      rows,
+      avg,
+      prediction: {
+        bracket,
+        filtrationBracket: bracket,
+        reusable,
+        suggestedTank: tank,
+        tank,
+      },
     };
   });
+
   localStorage.setItem("waterIQ_iterations", JSON.stringify(iterations));
 }
 
@@ -117,7 +148,9 @@ export default function HistoryPage() {
   useEffect(() => {
     try {
       const stored = JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]") as Iteration[];
-      if (stored.length === 0) seedDemoData();
+      // If empty OR if data is in old flat format (missing rows array), reseed
+      const needsReseed = stored.length === 0 || !stored[0]?.rows;
+      if (needsReseed) seedDemoData();
       const reloaded = JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]") as Iteration[];
       setRawIterations(reloaded);
     } catch { setRawIterations([]); }
@@ -207,6 +240,15 @@ export default function HistoryPage() {
         ::-webkit-scrollbar-track { background: #020910; }
         ::-webkit-scrollbar-thumb { background: #0f2236; border-radius: 3px; }
 
+        /* Mobile responsive */
+        @media (max-width: 768px) {
+          .history-header { flex-direction: column !important; gap: 10px !important; padding: 10px 14px !important; }
+          .history-body   { flex-direction: column !important; padding: 12px 14px !important; }
+          .history-filter { width: 100% !important; position: static !important; }
+          .history-kpis   { flex-wrap: wrap !important; }
+          .history-kpi-card { flex: 1 1 120px !important; }
+        }
+
         /* scan-line overlay */
         .scan-line {
           position: fixed; left: 0; width: 100%;
@@ -249,6 +291,8 @@ export default function HistoryPage() {
             HEADER BAR
         ═══════════════════════════════════════ */}
         <div style={{
+          className="history-header"
+        }} style={{
           background: "#030b17",
           borderBottom: "1px solid #0f2236",
           padding: "12px 28px",
@@ -360,15 +404,15 @@ export default function HistoryPage() {
           </div>
 
           {/* ── Body: [FilterPanel | ChartsGrid] ── */}
-          <div style={{ display: "flex", gap: 20, alignItems: "flex-start", marginBottom: 24 }}>
+          <div className="history-body" style={{ display: "flex", gap: 20, alignItems: "flex-start", marginBottom: 24 }}>
 
             {/* Filter Panel */}
-            <FilterPanel
+            <div className="history-filter"><FilterPanel
               filters={filters}
               onChange={patchFilter}
               onReset={() => setFilters(DEFAULT_FILTERS)}
               resultCount={filtered.length}
-            />
+            /></div>
 
             {/* Charts */}
             <div style={{ flex: 1, minWidth: 0 }}>

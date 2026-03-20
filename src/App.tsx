@@ -4,6 +4,7 @@ import Layout from "./layout/Layout";
 import Home from "./pages/Home";
 import Settings from "./pages/Settings";
 import ComingSoon from "./pages/ComingSoon";
+import HistoryPage from "./pages/history/HistoryPage";
 import Dashboard from "./pages/Dashboard";
 import GreywaterViz from "./pages/GreywaterViz";
 import Preloader from "./components/Preloader";
@@ -35,7 +36,7 @@ export default function App() {
             <Route path="/home"      element={<Home />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/chamber"   element={<GreywaterViz />} />
-            <Route path="/history"   element={<ComingSoon page="History"    icon="◷" sub="Session logs & analytics" />} />
+            <Route path="/history"   element={<HistoryPage />} />
             <Route path="/settings"  element={<Settings />} />
             <Route path="*"          element={<Navigate to="/home" replace />} />
           </Route>
