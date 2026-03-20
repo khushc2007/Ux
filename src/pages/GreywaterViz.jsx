@@ -1850,7 +1850,7 @@ function TLvl({ label, sub, level, col }) {
 
 // ─── STYLES ───────────────────────────────────────────────────
 const S = {
-  root: { width: "100%", height: "calc(100dvh - 52px - var(--nav-h, 68px))", background: "#020b14", display: "flex", flexDirection: "column", fontFamily: "'Rajdhani',sans-serif", overflow: "hidden", color: "#c8e8f8" },
+  root: { width: "100%", height: "calc(100dvh - 52px - var(--nav-h, 68px))", background: "#020b14", display: "flex", flexDirection: "column", fontFamily: "'Rajdhani',sans-serif", overflowX: "hidden", color: "#c8e8f8" },
   // Internal sub-header (48px on mobile, 52px on desktop)
   header: { height: 52, background: "linear-gradient(90deg,#020b14,#030e1a 40%,#020b14)", borderBottom: "1px solid #071828", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", flexShrink: 0, gap: 10 },
   logoRow: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0 },
