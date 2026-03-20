@@ -102,6 +102,14 @@ function seedDemoData() {
   localStorage.setItem("waterIQ_iterations", JSON.stringify(iterations));
 }
 
+/* ── Pre-seed demo data at module load so first render has data immediately ── */
+(function preSeed() {
+  try {
+    const stored = JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]");
+    if (stored.length === 0 || !stored[0]?.rows) seedDemoData();
+  } catch (_) {}
+})();
+
 /* ── Default filters ── */
 const DEFAULT_FILTERS: FilterState = {
   bracket: "", tank: "", reusable: "", anomalyOnly: false,
@@ -139,12 +147,9 @@ export default function HistoryPage() {
   const [animeReady, setAnimeReady] = useState(false);
   useAnimeJS(() => setAnimeReady(true));
 
-  /* ── Load data synchronously so page renders with data immediately ── */
+  /* ── Data is pre-seeded at module load — just read it ── */
   const [rawIterations, setRawIterations] = useState<Iteration[]>(() => {
     try {
-      const stored = JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]") as Iteration[];
-      const needsReseed = stored.length === 0 || !stored[0]?.rows;
-      if (needsReseed) seedDemoData();
       return JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]") as Iteration[];
     } catch { return []; }
   });
@@ -279,7 +284,7 @@ export default function HistoryPage() {
           padding: "0 0 60px",
           position: "relative",
           zIndex: 1,
-          opacity: 0,
+          opacity: 1,
         }}
       >
 
