@@ -1209,12 +1209,18 @@ export default function GreywaterViz() {
     { id: "NH3",  label: "NH₃",        val: readings.nh3.toFixed(2),        unit: " mg/L",  col: "#ff6b8a", safe: [0,1],     pct: Math.min(readings.nh3 / 5, 1) * 100 },
   ], [readings]);
 
+  // Override body background to remove diagonal stripes on this page
+  useEffect(() => {
+    const prev = document.body.style.backgroundImage;
+    document.body.style.backgroundImage = 'none';
+    document.body.style.backgroundColor = '#020b14';
+    return () => {
+      document.body.style.backgroundImage = prev;
+      document.body.style.backgroundColor = '';
+    };
+  }, []);
+
   return (
-    <>
-      {/* Full-viewport background cover — hides body diagonal stripes */}
-      <div style={{
-        position: 'fixed', inset: 0, background: '#020b14', zIndex: -1, pointerEvents: 'none',
-      }} />
     <div style={S.root}>
       <style>{CSS}</style>
 
@@ -1418,7 +1424,6 @@ export default function GreywaterViz() {
         </div>
       )}
     </div>
-    </>
   );
 
   // ─── RENDER FUNCTIONS (extracted for mobile/desktop reuse) ───
