@@ -1142,7 +1142,18 @@ function SectionAccount({ showToast }: { showToast: (msg: string) => void }) {
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
+function useIsMobile() {
+  const [mobile, setMobile] = useState(typeof window !== "undefined" ? window.innerWidth < 768 : false);
+  useEffect(() => {
+    const h = () => setMobile(window.innerWidth < 768);
+    window.addEventListener("resize", h);
+    return () => window.removeEventListener("resize", h);
+  }, []);
+  return mobile;
+}
+
 export default function Settings() {
+  const isMobile = useIsMobile();
   const [activeSection, setActiveSection] = useState<Section>("system");
   const [status, setStatus]       = useState<SysStatus | null>(null);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
@@ -1299,6 +1310,10 @@ const CSS = `
 @media (max-width: 768px) {
   .settings-layout { grid-template-columns: 1fr; }
   .settings-leftnav { display: none !important; }
+  .settings-mobiletabs { display: flex !important; }
+  .settings-rightpanel { display: none !important; }
+  .g-card { border-radius: var(--r-lg); }
+  .page { padding-left: 8px !important; padding-right: 8px !important; }
 }
 
 .settings-leftnav {

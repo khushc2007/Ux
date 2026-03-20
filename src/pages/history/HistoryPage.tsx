@@ -41,6 +41,36 @@ function useAnimeJS(onReady: () => void) {
   }, []); // eslint-disable-line
 }
 
+/* ── Demo data seeder ── */
+function seedDemoData() {
+  const brackets = ["F1","F1","F2","F2","F2","F3","F4"];
+  const tanks = ["T1","T2","T3"];
+  const methods = ["Lamella + UV Stage 2","Sand Filter + Chlorination","Membrane Bioreactor","Reverse Osmosis Stage 1"];
+  const now = Date.now();
+  const iterations = Array.from({ length: 40 }, (_, i) => {
+    const bracket = brackets[Math.floor(Math.random() * brackets.length)];
+    const reusable = bracket === "F1" || bracket === "F2" ? Math.random() > 0.1 : Math.random() > 0.6;
+    const wqiScore = bracket === "F1" ? 80 + Math.random()*15 : bracket === "F2" ? 65 + Math.random()*15 : bracket === "F3" ? 45 + Math.random()*20 : 25 + Math.random()*20;
+    const conf = reusable ? 0.75 + Math.random()*0.22 : 0.55 + Math.random()*0.25;
+    const ts = now - (39 - i) * (7 * 24 * 60 * 60 * 1000 / 40) + (Math.random() - 0.5) * 1800000;
+    return {
+      id: `demo_${i}`,
+      timestamp: new Date(ts).toISOString(),
+      bracket,
+      reusable,
+      suggestedTank: tanks[Math.floor(Math.random() * tanks.length)],
+      filtrationMethod: methods[Math.floor(Math.random() * methods.length)],
+      wqi: { score: +wqiScore.toFixed(1), interpretation: wqiScore >= 80 ? "Excellent" : wqiScore >= 65 ? "Good" : wqiScore >= 50 ? "Fair" : "Poor", phContribution: +(wqiScore * 0.38).toFixed(1), turbidityContribution: +(wqiScore * 0.30).toFixed(1), tdsContribution: +(wqiScore * 0.32).toFixed(1) },
+      confidence: { score: +conf.toFixed(2), level: conf > 0.85 ? "high" : conf > 0.70 ? "medium" : "low", recommendation: reusable ? "proceed" : "re_run_cycle", disagreementFlags: conf < 0.7 ? ["turbidity_ph_divergence"] : [] },
+      flatline: { anyFlatlined: false, failsafeTriggered: false, ph: false, turbidity: false, tds: false },
+      recalibration: { triggered: Math.random() > 0.85, correctedTurbidity: null, originalTurbidity: null, reason: null },
+      cycleFingerprint: { anomalyScore: +(Math.random() * 0.4).toFixed(2), anomalyFlags: [], turbiditySlope: +((Math.random()-0.5)*0.08).toFixed(3), phSlope: +((Math.random()-0.5)*0.02).toFixed(3), tdsSlope: +((Math.random()-0.5)*3).toFixed(2), durationMs: 14000 + Math.floor(Math.random()*12000) },
+      readings: Array.from({ length: 12 }, (_, j) => ({ t: j * 1500, ph: 6.5 + Math.random()*2, turbidity: 0.5 + Math.random()*8, tds: 150 + Math.random()*600 })),
+    };
+  });
+  localStorage.setItem("waterIQ_iterations", JSON.stringify(iterations));
+}
+
 /* ── Default filters ── */
 const DEFAULT_FILTERS: FilterState = {
   bracket: "", tank: "", reusable: "", anomalyOnly: false,
@@ -87,7 +117,9 @@ export default function HistoryPage() {
   useEffect(() => {
     try {
       const stored = JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]") as Iteration[];
-      setRawIterations(stored);
+      if (stored.length === 0) seedDemoData();
+      const reloaded = JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]") as Iteration[];
+      setRawIterations(reloaded);
     } catch { setRawIterations([]); }
   }, []);
 
@@ -274,7 +306,29 @@ export default function HistoryPage() {
               </div>
               <div style={{ fontSize: 14, fontWeight: 800, color: "#22c55e" }}>{uptime}</div>
             </div>
-          </div>
+          
+            {/* Time range selector */}
+            <div style={{ display: "flex", gap: 4 }}>
+              {(["1hr","24hr","7days"] as const).map(r => (
+                <button key={r} onClick={() => {
+                  const ms = r === "1hr" ? 3600000 : r === "24hr" ? 86400000 : 604800000;
+                  const from = new Date(Date.now() - ms).toISOString().slice(0,16);
+                  patchFilter({ dateFrom: from, dateTo: "" });
+                }} style={{
+                  padding: "4px 10px", border: "1px solid #0f2236", borderRadius: 5, cursor: "pointer",
+                  background: "#040b16", color: "#38bdf8",
+                  fontFamily: "inherit", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
+                }}>
+                  {r.toUpperCase()}
+                </button>
+              ))}
+              <button onClick={() => patchFilter({ dateFrom: "", dateTo: "" })} style={{
+                padding: "4px 10px", border: "1px solid #0f2236", borderRadius: 5, cursor: "pointer",
+                background: "#040b16", color: "#64748b",
+                fontFamily: "inherit", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
+              }}>ALL</button>
+            </div>
+</div>
         </div>
 
         {/* ═══════════════════════════════════════

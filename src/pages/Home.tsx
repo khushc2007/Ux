@@ -33,6 +33,20 @@ function drift(v: number, min: number, max: number, step: number) {
   return Math.max(min, Math.min(max, +(v + (Math.random() > 0.5 ? step : -step) + (Math.random() - 0.5) * step * 0.4).toFixed(2)));
 }
 
+const DEMO_PRED: Prediction = {
+  bracket: 'F2',
+  reusable: true,
+  suggestedTank: 'T2',
+  filtrationMethod: 'Lamella + UV Stage 2',
+  wqi: { score: 74, interpretation: 'Good', phContribution: 28.4, turbidityContribution: 22.1, tdsContribution: 23.5 },
+  confidence: { score: 0.87, level: 'high', recommendation: 'proceed', disagreementFlags: [] },
+  flatline: { anyFlatlined: false, failsafeTriggered: false, ph: false, turbidity: false, tds: false },
+  recalibration: { triggered: false, correctedTurbidity: null, originalTurbidity: null, reason: null },
+  cycleFingerprint: { anomalyScore: 0.12, anomalyFlags: [], turbiditySlope: -0.031, phSlope: 0.008, tdsSlope: -1.24, durationMs: 18400 },
+  stageAware: { stage: 'post_lamella', note: 'Lamella sedimentation complete — UV stage active' },
+};
+
+
 /* ═══════════════════════════════════════════════
    SHARED CARD COMPONENT
 ═══════════════════════════════════════════════ */
@@ -479,17 +493,31 @@ function TankWidget() {
 }
 
 /* ═══════════════════════════════════════════════
+   IS MOBILE HOOK
+═══════════════════════════════════════════════ */
+function useIsMobile() {
+  const [mobile, setMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+  useEffect(() => {
+    const h = () => setMobile(window.innerWidth < 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return mobile;
+}
+
+/* ═══════════════════════════════════════════════
    HOME PAGE
 ═══════════════════════════════════════════════ */
 export default function Home() {
+  const isMobile = useIsMobile();
   const [pts, setPts] = useState<SensorPt[]>(() =>
     Array.from({ length: 20 }, (_, i) => ({
       t: new Date(Date.now() - (19-i)*TICK_MS).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
       ph: 6.8 + Math.random()*1.2, turb: 1 + Math.random()*4, tds: 200 + Math.random()*300,
     }))
   );
-  const [pred, setPred]         = useState<Prediction | null>(null);
-  const [backendOk, setBackendOk] = useState<boolean | null>(null);
+  const [pred, setPred]         = useState<Prediction | null>(DEMO_PRED);
+  const [backendOk, setBackendOk] = useState<boolean | null>(false);
   const driftRef = useRef({ ph: 7.2, turb: 2.8, tds: 320 });
 
   // Sensor drift
@@ -529,10 +557,10 @@ export default function Home() {
       </div>
 
       {/* ── Main grid ── */}
-      <div className="grid-home" style={{ display: "grid", gridTemplateColumns: "224px 1fr 224px", gap: 12 }}>
+      <div className="grid-home" style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "224px 1fr 224px", gap: 12 }}>
 
         {/* LEFT COLUMN */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, order: isMobile ? 1 : 0 }}>
           <Card title="Water Quality Index" accent="var(--cyan)">
             <WQIGauge wqi={pred?.wqi ?? null} />
           </Card>
@@ -548,7 +576,7 @@ export default function Home() {
         </div>
 
         {/* CENTER COLUMN */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, order: isMobile ? -1 : 0 }}>
           {/* Live chart — tallest card */}
           <Card title="Live Telemetry" accent="var(--cyan)" live style={{ minHeight: 230 }}>
             <LiveChart pts={pts} />
@@ -566,7 +594,7 @@ export default function Home() {
         </div>
 
         {/* RIGHT COLUMN */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, order: isMobile ? 2 : 0 }}>
           <Card title="System Status" accent="var(--cyan)">
             <SystemStatus pred={pred} backendOk={backendOk} />
           </Card>
