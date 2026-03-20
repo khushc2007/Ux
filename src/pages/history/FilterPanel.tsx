@@ -57,7 +57,7 @@ const Section = memo(({
     const a = (window as any).anime;
     if (open) {
       bodyRef.current.style.display = "flex";
-      a({ targets: bodyRef.current, opacity: [0, 1], translateY: [-8, 0], duration: 280, easing: "easeOutExpo" });
+      a({ targets: bodyRef.current, opacity: [0.9, 1], translateY: [-2, 0], duration: 280, easing: "easeOutExpo" });
     } else {
       a({
         targets: bodyRef.current, opacity: [1, 0], translateY: [0, -8],
@@ -146,7 +146,7 @@ export const FilterPanel = memo(({
     (window as any).anime({
       targets: panelRef.current,
       translateX: [-30, 0],
-      opacity: [0, 1],
+      opacity: [0.9, 1],
       duration: 520,
       easing: "easeOutExpo",
     });
@@ -168,7 +168,7 @@ export const FilterPanel = memo(({
         height: "fit-content",
         position: "sticky",
         top: 20,
-        opacity: 0,
+        opacity: 1,
       }}
     >
       {/* Panel header */}
