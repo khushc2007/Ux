@@ -176,9 +176,8 @@ const _tmpColor = new THREE.Color();
 function buildScene(canvas, getState, isMob = false) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
   renderer.setPixelRatio(isMob ? Math.min(window.devicePixelRatio, 1) : Math.min(window.devicePixelRatio, 2));
-  // Robust size: canvas may report 0 on first paint on mobile
   const getW = () => canvas.clientWidth  || canvas.parentElement?.clientWidth  || window.innerWidth;
-  const getH = () => canvas.clientHeight || canvas.parentElement?.clientHeight || (window.innerHeight - 200);
+  const getH = () => canvas.clientHeight || canvas.parentElement?.clientHeight || Math.round(window.innerHeight * 0.7);
   renderer.setSize(getW(), getH());
   renderer.shadowMap.enabled = !isMob;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -186,7 +185,7 @@ function buildScene(canvas, getState, isMob = false) {
   renderer.toneMappingExposure = 1.25;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-  const camera = new THREE.PerspectiveCamera(40, getW() / getH(), 0.1, 120);
+  const camera = new THREE.PerspectiveCamera(40, getW() / Math.max(1, getH()), 0.1, 120);
   camera.position.set(6.2, 3.8, 7.0);
   camera.lookAt(0, 0.3, 0);
 
@@ -275,7 +274,7 @@ function buildScene(canvas, getState, isMob = false) {
   scene.add(fillLight2);
 
   const chamberSpot = new THREE.SpotLight(0xffffff, 2.2, 14, 0.35, 0.8);
-  chamberSpot.position.set(0, 8, 1); chamberSpot.castShadow = true; chamberSpot.shadow.mapSize.set(1024, 1024);
+  chamberSpot.position.set(0, 8, 1); chamberSpot.castShadow = !isMob; chamberSpot.shadow.mapSize.set(512, 512);
   scene.add(chamberSpot);
 
   const tankALight = new THREE.PointLight(0x00ff9d, 0.8, 10); tankALight.position.set(-3.6, -0.8, 0); scene.add(tankALight);
@@ -289,7 +288,6 @@ function buildScene(canvas, getState, isMob = false) {
   ground.rotation.x = -Math.PI / 2; ground.position.y = -2.4; ground.receiveShadow = true; scene.add(ground);
   const grid = new THREE.GridHelper(30, 36, 0x0d2235, 0x071828); grid.position.y = -2.38; scene.add(grid);
 
-  // ── Apartment building (skip on mobile for perf) ───────────
   const windowMats = [];
   if (!isMob) {
   const aptGroup = new THREE.Group(); aptGroup.position.set(0, 4.2, -4.0);
@@ -314,7 +312,7 @@ function buildScene(canvas, getState, isMob = false) {
   sinkM.position.set(1.9, -0.5, 0.06); aptGroup.add(sinkM);
   scene.add(aptGroup);
 
-  } // end !isMob apartment block
+  } // end apartment
 
   const bPipeMat = new THREE.MeshStandardMaterial({ color: 0x2a4060, metalness: 0.90, roughness: 0.20 });
   disposables.push(bPipeMat);
@@ -329,13 +327,13 @@ function buildScene(canvas, getState, isMob = false) {
 
   const shellMat = new THREE.MeshPhysicalMaterial({ color: 0xb0d8f5, transparent: true, opacity: 0.09, roughness: 0, metalness: 0, transmission: 0.92, thickness: 0.6, ior: 1.45, side: THREE.DoubleSide, depthWrite: false });
   disposables.push(shellMat);
-  chamberGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R, CHAM_R, CHAM_H, isMob ? 48 : 96, 2, true), shellMat));
-  chamberGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R * 0.97, CHAM_R * 0.97, CHAM_H, isMob ? 48 : 96, 1, true), new THREE.MeshPhysicalMaterial({ color: 0x88c8f0, transparent: true, opacity: 0.04, roughness: 0, side: THREE.BackSide, depthWrite: false })));
+  chamberGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R, CHAM_R, CHAM_H, isMob ? 40 : 96, 2, true), shellMat));
+  chamberGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R * 0.97, CHAM_R * 0.97, CHAM_H, 96, 1, true), new THREE.MeshPhysicalMaterial({ color: 0x88c8f0, transparent: true, opacity: 0.04, roughness: 0, side: THREE.BackSide, depthWrite: false })));
 
   const topCap = new THREE.Mesh(new THREE.CircleGeometry(CHAM_R, 96), new THREE.MeshPhysicalMaterial({ color: 0xb0d8f5, transparent: true, opacity: 0.18, roughness: 0, side: THREE.DoubleSide, depthWrite: false }));
   topCap.rotation.x = -Math.PI / 2; topCap.position.y = CHAM_H / 2; chamberGroup.add(topCap);
 
-  const coneMesh = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R, 0.10, coneH, isMob ? 32 : 64, 1, true), new THREE.MeshPhysicalMaterial({ color: 0xa0c8e8, transparent: true, opacity: 0.14, roughness: 0, side: THREE.DoubleSide, depthWrite: false }));
+  const coneMesh = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R, 0.10, coneH, 64, 1, true), new THREE.MeshPhysicalMaterial({ color: 0xa0c8e8, transparent: true, opacity: 0.14, roughness: 0, side: THREE.DoubleSide, depthWrite: false }));
   coneMesh.position.y = -(CHAM_H / 2 + coneH / 2 - 0.01); chamberGroup.add(coneMesh);
 
   [-CHAM_H / 2 + 0.15, -0.55, 0.2, 0.95, CHAM_H / 2 - 0.15].forEach(y => {
@@ -348,7 +346,7 @@ function buildScene(canvas, getState, isMob = false) {
   const waterUniforms = { uTime: { value: 0 }, uSwirl: { value: 0 }, uContam: { value: 0.2 }, uOpacity: { value: 0.52 }, uFill: { value: 0 } };
   const waterMat = new THREE.ShaderMaterial({ vertexShader: waterVS, fragmentShader: waterFS, uniforms: waterUniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide });
   disposables.push(waterMat);
-  const waterMesh = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R * 0.965, CHAM_R * 0.965, CHAM_H * 0.95, isMob ? 40 : 72, isMob ? 8 : 16), waterMat);
+  const waterMesh = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R * 0.965, CHAM_R * 0.965, CHAM_H * 0.95, isMob ? 36 : 72, isMob ? 6 : 16), waterMat);
   waterMesh.visible = false; chamberGroup.add(waterMesh);
 
   // Oil surface ──
@@ -418,20 +416,20 @@ function buildScene(canvas, getState, isMob = false) {
     housing.position.set(s.pos[0], s.pos[1] + 0.14, s.pos[2]); chamberGroup.add(housing);
     const bulbMat = new THREE.MeshStandardMaterial({ color: s.col, emissive: new THREE.Color(s.col), emissiveIntensity: 0.45, metalness: 0.25, roughness: 0.35 });
     disposables.push(bulbMat);
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.045, isMob ? 10 : 20, isMob ? 10 : 20), bulbMat);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.045, 20, 20), bulbMat);
     bulb.position.set(s.pos[0], s.pos[1] - 0.46, s.pos[2]);
     bulb.userData = { id: s.id, label: s.label, col: s.col };
     sensorBulbs.push(bulb); chamberGroup.add(bulb);
     const glowMat = new THREE.MeshStandardMaterial({ color: s.col, transparent: true, opacity: 0.08, emissive: new THREE.Color(s.col), emissiveIntensity: 1.0, side: THREE.BackSide, depthWrite: false });
     disposables.push(glowMat);
-    const glowSph = new THREE.Mesh(new THREE.SphereGeometry(0.07, isMob ? 8 : 16, isMob ? 8 : 16), glowMat);
+    const glowSph = new THREE.Mesh(new THREE.SphereGeometry(0.07, 16, 16), glowMat);
     glowSph.position.copy(bulb.position); chamberGroup.add(glowSph);
   });
 
   // Classification glow shell ──
   const glowShellMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0, emissiveIntensity: 1.0, side: THREE.BackSide, depthWrite: false });
   disposables.push(glowShellMat);
-  const glowShell = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R + 0.06, CHAM_R + 0.06, CHAM_H + 0.12, isMob ? 36 : 72, 1, true), glowShellMat);
+  const glowShell = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R + 0.06, CHAM_R + 0.06, CHAM_H + 0.12, 72, 1, true), glowShellMat);
   chamberGroup.add(glowShell);
   scene.add(chamberGroup);
 
@@ -478,14 +476,14 @@ function buildScene(canvas, getState, isMob = false) {
 
     const tankShellMat = new THREE.MeshPhysicalMaterial({ color: 0x90c8e8, transparent: true, opacity: 0.11, roughness: 0, transmission: 0.88, thickness: 0.4, ior: 1.45, side: THREE.DoubleSide, depthWrite: false });
     disposables.push(tankShellMat);
-    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R, T_R, T_H, isMob ? 36 : 72, 2, true), tankShellMat));
-    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R * 0.97, T_R * 0.97, T_H, isMob ? 36 : 72, 1, true), new THREE.MeshPhysicalMaterial({ color: 0x60a8d8, transparent: true, opacity: 0.03, roughness: 0, side: THREE.BackSide, depthWrite: false })));
+    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R, T_R, T_H, 72, 2, true), tankShellMat));
+    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R * 0.97, T_R * 0.97, T_H, 72, 1, true), new THREE.MeshPhysicalMaterial({ color: 0x60a8d8, transparent: true, opacity: 0.03, roughness: 0, side: THREE.BackSide, depthWrite: false })));
 
     const botDisc = new THREE.Mesh(new THREE.CircleGeometry(T_R, 72), new THREE.MeshStandardMaterial({ color: 0x0d1e30, roughness: 0.85, metalness: 0.15 }));
     botDisc.rotation.x = -Math.PI / 2; botDisc.position.y = -T_H / 2; grp.add(botDisc);
 
     const fillMat = new THREE.MeshStandardMaterial({ color: col, transparent: true, opacity: 0.40, emissive: new THREE.Color(col), emissiveIntensity: 0.05, depthWrite: false });
-    const fillMesh = new THREE.Mesh(new THREE.CylinderGeometry(T_R * 0.93, T_R * 0.93, T_H, isMob ? 24 : 48), fillMat);
+    const fillMesh = new THREE.Mesh(new THREE.CylinderGeometry(T_R * 0.93, T_R * 0.93, T_H, 48), fillMat);
     grp.add(fillMesh); disposables.push(fillMat);
 
     const surfaceMat = new THREE.MeshStandardMaterial({ color: col, transparent: true, opacity: 0.55, emissive: new THREE.Color(col), emissiveIntensity: 0.08, depthWrite: false });
@@ -493,7 +491,7 @@ function buildScene(canvas, getState, isMob = false) {
     surfaceMesh.rotation.x = -Math.PI / 2; grp.add(surfaceMesh); disposables.push(surfaceMat);
 
     const glowMat = new THREE.MeshStandardMaterial({ color: col, transparent: true, opacity: 0.025, emissive: new THREE.Color(col), emissiveIntensity: 1.0, side: THREE.BackSide, depthWrite: false });
-    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R + 0.035, T_R + 0.035, T_H + 0.07, isMob ? 36 : 72, 1, true), glowMat));
+    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R + 0.035, T_R + 0.035, T_H + 0.07, 72, 1, true), glowMat));
     disposables.push(glowMat);
 
     [-T_H / 2 + 0.12, -T_H * 0.18, T_H * 0.18, T_H / 2 - 0.12].forEach(y => {
@@ -516,7 +514,7 @@ function buildScene(canvas, getState, isMob = false) {
   // ══ PARTICLE SYSTEMS ══════════════════════════════════════
 
   // Sludge ──
-  const SL = isMob ? 80 : 280;
+  const SL = isMob ? 60 : 280;
   const slPos = new Float32Array(SL * 3);
   for (let i = 0; i < SL; i++) { const r = Math.random() * 0.62, a = Math.random() * Math.PI * 2; slPos[i * 3] = Math.cos(a) * r; slPos[i * 3 + 1] = -1.32 + Math.random() * 0.28; slPos[i * 3 + 2] = Math.sin(a) * r; }
   const slGeo = new THREE.BufferGeometry(); slGeo.setAttribute("position", new THREE.BufferAttribute(slPos, 3));
@@ -525,7 +523,7 @@ function buildScene(canvas, getState, isMob = false) {
   disposables.push(slGeo, slMat);
 
   // Oil droplets ──
-  const OIL = isMob ? 25 : 80;
+  const OIL = isMob ? 20 : 80;
   const oilPos = new Float32Array(OIL * 3);
   for (let i = 0; i < OIL; i++) { const r = Math.random() * 0.68, a = Math.random() * Math.PI * 2; oilPos[i * 3] = Math.cos(a) * r; oilPos[i * 3 + 1] = 0.65 + Math.random() * 0.18; oilPos[i * 3 + 2] = Math.sin(a) * r; }
   const oilPGeo = new THREE.BufferGeometry(); oilPGeo.setAttribute("position", new THREE.BufferAttribute(oilPos, 3));
@@ -534,7 +532,7 @@ function buildScene(canvas, getState, isMob = false) {
   disposables.push(oilPGeo, oilPMat);
 
   // Rising micro-bubbles ──
-  const BUB = isMob ? 20 : 55;
+  const BUB = isMob ? 18 : 55;
   const bubPos = new Float32Array(BUB * 3), bubAge = new Float32Array(BUB), bubLife = new Float32Array(BUB);
   for (let i = 0; i < BUB; i++) { const r = Math.random() * 0.55, a = Math.random() * Math.PI * 2; bubPos[i * 3] = Math.cos(a) * r; bubPos[i * 3 + 1] = -1.3 + Math.random() * 2.4; bubPos[i * 3 + 2] = Math.sin(a) * r; bubAge[i] = Math.random() * 2.5; bubLife[i] = 1.8 + Math.random() * 1.2; }
   const bubGeo = new THREE.BufferGeometry(); bubGeo.setAttribute("position", new THREE.BufferAttribute(bubPos, 3));
@@ -543,7 +541,7 @@ function buildScene(canvas, getState, isMob = false) {
   disposables.push(bubGeo, bubMat);
 
   // Apartment stream ──
-  const STREAM = isMob ? 40 : 120;
+  const STREAM = isMob ? 30 : 120;
   const stPos = new Float32Array(STREAM * 3), stVel = new Float32Array(STREAM * 3);
   const stAge = new Float32Array(STREAM), stLife = new Float32Array(STREAM);
   for (let i = 0; i < STREAM; i++) {
@@ -560,7 +558,7 @@ function buildScene(canvas, getState, isMob = false) {
   disposables.push(stGeo, stMat);
 
   // Splash ──
-  const SPLASH = isMob ? 12 : 40;
+  const SPLASH = isMob ? 10 : 40;
   const splPos = new Float32Array(SPLASH * 3), splVel = new Float32Array(SPLASH * 3);
   const splAge = new Float32Array(SPLASH), splLife = new Float32Array(SPLASH);
   for (let i = 0; i < SPLASH; i++) {
@@ -574,7 +572,7 @@ function buildScene(canvas, getState, isMob = false) {
   disposables.push(splGeo, splMat);
 
   // Inlet swirl ──
-  const IN = isMob ? 30 : 90;
+  const IN = isMob ? 25 : 90;
   const inP = new Float32Array(IN * 3), inV = new Float32Array(IN * 3), inA = new Float32Array(IN), inL = new Float32Array(IN);
   for (let i = 0; i < IN; i++) {
     inP[i * 3] = 0.88; inP[i * 3 + 1] = 0.40; inP[i * 3 + 2] = 0;
@@ -699,12 +697,10 @@ function buildScene(canvas, getState, isMob = false) {
   let raf, lastTime = 0;
   const clock = new THREE.Clock();
 
-  let frameCount = 0;
+  let _fc = 0;
   function animate(nowMs) {
     raf = requestAnimationFrame(animate);
-    frameCount++;
-    // On mobile skip every other frame for battery/perf
-    if (isMob && frameCount % 2 !== 0) return;
+    if (isMob && ++_fc % 2 !== 0) return;
     const t  = clock.getElapsedTime();              // monotonic elapsed
     const dt = Math.min((nowMs - lastTime) / 1000, 0.05); // real delta from rAF timestamp
     lastTime = nowMs;
@@ -949,13 +945,12 @@ function buildScene(canvas, getState, isMob = false) {
   }
 
   requestAnimationFrame(ts => { lastTime = ts; animate(ts); });
-  // Re-check size after 200ms in case mobile layout shifted
-  setTimeout(onResize, 200);
+  if (isMob) setTimeout(onResize, 250);
 
   function onResize() {
     const rw = canvas.clientWidth  || canvas.parentElement?.clientWidth  || window.innerWidth;
-    const rh = canvas.clientHeight || canvas.parentElement?.clientHeight || (window.innerHeight - 200);
-    if (rw === 0 || rh === 0) return;
+    const rh = canvas.clientHeight || canvas.parentElement?.clientHeight || Math.round(window.innerHeight * 0.7);
+    if (!rw || !rh) return;
     renderer.setSize(rw, rh);
     camera.aspect = rw / rh;
     camera.updateProjectionMatrix();
@@ -1080,12 +1075,12 @@ export default function GreywaterViz() {
     const canvas = canvasRef.current;
     const mobile = window.innerWidth < 768;
     let cleanupScene = null;
-    // Delay 80ms so mobile layout/flex settles before canvas gets dimensions
-    const timerId = setTimeout(() => {
+    // Delay 120ms so mobile flex layout fully settles before canvas reads dimensions
+    const tid = setTimeout(() => {
       cleanupScene = buildScene(canvas, () => stateRef.current, mobile);
-    }, 80);
+    }, mobile ? 120 : 0);
     return () => {
-      clearTimeout(timerId);
+      clearTimeout(tid);
       if (cleanupScene) cleanupScene();
       cycleTimers.current.forEach(id => clearTimeout(id));
       cycleTimers.current = [];
@@ -1107,7 +1102,7 @@ export default function GreywaterViz() {
       setSparkTDS (p => [...p.slice(1), +(p[p.length-1] + (Math.random()-0.5)*5   ).toFixed(0)]);
       setSparkTurb(p => [...p.slice(1), +(p[p.length-1] + (Math.random()-0.5)*0.08).toFixed(2)]);
       setSparkORP (p => [...p.slice(1), +(p[p.length-1] + (Math.random()-0.5)*4   ).toFixed(0)]);
-    }, window.innerWidth < 768 ? 1400 : 700);
+    }, 700);
     return () => clearInterval(iv);
   }, [running]);
 
@@ -1230,7 +1225,7 @@ export default function GreywaterViz() {
     { id: "NH3",  label: "NH₃",        val: readings.nh3.toFixed(2),        unit: " mg/L",  col: "#ff6b8a", safe: [0,1],     pct: Math.min(readings.nh3 / 5, 1) * 100 },
   ], [readings]);
 
-  // Remove diagonal body stripes while on this page
+  // Strip diagonal stripes from body while on this page
   useEffect(() => {
     const prevImg = document.body.style.backgroundImage;
     const prevCol = document.body.style.backgroundColor;
@@ -1303,123 +1298,77 @@ export default function GreywaterViz() {
 
       {/* ── BODY ───────────────────────────────────────────── */}
       {isMobile ? (
-        /* ══ MOBILE LAYOUT ══ */
-        <div style={S.bodyMobile}>
-          {/* Canvas fills screen above sheet */}
-          <div style={{ ...S.canvasWrapMobile, height: sheetOpen ? "45%" : "calc(100% - 52px)" }}>
-            <canvas ref={canvasRef} style={S.canvas} />
+        /* ══ MOBILE — fullscreen canvas only, zero panel overhead ══ */
+        <div style={{ flex: 1, position: "relative", overflow: "hidden", background: "#020b14" }}>
 
-            {/* Minimal phase dot on mobile */}
-            <div style={{ position: "absolute", top: 8, left: 8, display: "flex", flexDirection: "column", gap: 3, pointerEvents: "none" }}>
-              {PHASES.map((p, i) => {
-                const ci = PHASES.indexOf(phase), done = i < ci, cur = p === phase;
-                const c = PHASE_COLORS[p] || "#4a6580";
-                return <div key={p} style={{ width: cur ? 8 : 5, height: cur ? 8 : 5, borderRadius: "50%", background: cur ? c : done ? "#00ff9d33" : "#071828", boxShadow: cur ? `0 0 8px ${c}` : "none", transition: "all 0.3s", animation: cur ? "pulseDot 1s infinite" : "none" }} />;
-              })}
-            </div>
+          {/* Canvas fills 100% */}
+          <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", touchAction: "none", userSelect: "none" }} />
 
-            {/* Mobile EC bar — compact strip at top of canvas */}
-            {ecActive && (
-              <div style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", background: "#030c16ee", border: "1px solid #ffdb5833", borderRadius: 6, padding: "5px 12px", backdropFilter: "blur(8px)", pointerEvents: "none", display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontFamily: "'Space Mono',monospace", fontSize: 8, color: "#ffdb58" }}>⚡ EC</span>
-                <div style={{ width: 80, height: 3, background: "#071828", borderRadius: 99, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${(ecTimer / 900) * 100}%`, background: "linear-gradient(90deg,#00d4ff,#ffdb58)", borderRadius: 99, transition: "width 0.4s" }} />
-                </div>
-                <span style={{ fontFamily: "'Orbitron',monospace", fontSize: 9, color: "#ffdb58" }}>{Math.floor(ecTimer/60)}:{String(ecTimer%60).padStart(2,"0")}</span>
-              </div>
-            )}
-
-            {/* Mobile sparklines — compact bottom strip */}
-            {!sheetOpen && (
-              <div style={{ position: "absolute", bottom: 8, right: 8, background: "#030c16dd", border: "1px solid #0d2235", borderRadius: 7, padding: "7px 10px", backdropFilter: "blur(8px)", pointerEvents: "none" }}>
-                {[
-                  { label: "pH", data: sparkPH, col: "#00ff9d", val: readings.ph.toFixed(1) },
-                  { label: "TDS", data: sparkTDS, col: "#ff8c42", val: readings.tds },
-                  { label: "Turb", data: sparkTurb, col: "#00d4ff", val: readings.turbidity.toFixed(1) },
-                ].map(s => (
-                  <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                    <span style={{ fontFamily: "'Space Mono',monospace", fontSize: 8, color: s.col, width: 22, flexShrink: 0 }}>{s.label}</span>
-                    <Sparkline data={s.data} color={s.col} w={60} h={14} />
-                    <span style={{ fontFamily: "'Orbitron',monospace", fontSize: 9, color: s.col, minWidth: 32, textAlign: "right" }}>{s.val}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Valve pills on mobile */}
-            {!sheetOpen && (
-              <div style={{ position: "absolute", bottom: 8, left: 8, display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none" }}>
-                <VPill label="A" open={valveA > 0.5} col="#00ff9d" dest="Reuse" />
-                <VPill label="B" open={valveB > 0.5} col="#ff3f5a" dest="Treat" />
-              </div>
-            )}
-
-            {/* Tank levels mobile — top center */}
-            <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 8, pointerEvents: "none" }}>
-              <TLvl label="A" sub="REUSE" level={tankALevel} col="#00ff9d" />
-              <TLvl label="B" sub="TREAT" level={tankBLevel} col="#ff3f5a" />
-            </div>
-
-            {/* Classification popup */}
-            {popup && (
-              <div className="modal-in" style={{ ...S.modal, borderColor: BRACKET_META[popup.br].hex + "aa", boxShadow: `0 0 60px ${BRACKET_META[popup.br].hex}28` }}>
-                <button onClick={() => setPopup(null)} style={S.closeBtn}>✕</button>
-                <div style={{ fontFamily: "'Space Mono',monospace", fontSize: 8, color: "#1a4060", letterSpacing: "0.2em", marginBottom: 10 }}>◈ WATER QUALITY REPORT</div>
-                <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 56, fontWeight: 900, color: BRACKET_META[popup.br].hex, lineHeight: 1, textShadow: `0 0 30px ${BRACKET_META[popup.br].hex}66` }}>{popup.br}</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#c8e8f8", marginTop: 6 }}>{BRACKET_META[popup.br].label}</div>
-                <div style={{ fontSize: 9, color: "#2a5070", marginTop: 3, fontFamily: "'Space Mono',monospace" }}>{BRACKET_META[popup.br].desc}</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 12 }}>
-                  {[["pH", popup.rd.ph, ""], ["TDS", popup.rd.tds, " mg/L"], ["Turbidity", popup.rd.turbidity, " NTU"], ["ORP", popup.rd.orp, " mV"]].map(([k, v, u]) => (
-                    <div key={k} style={{ background: "#030c16", borderRadius: 7, padding: "7px 8px", border: "1px solid #0d2235", textAlign: "center" }}>
-                      <div style={{ fontSize: 8, color: "#1a3a5a", fontFamily: "'Space Mono',monospace", marginBottom: 2 }}>{k}</div>
-                      <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 13, fontWeight: 700, color: "#c8e8f8" }}>{v}<span style={{ fontSize: 8, opacity: 0.5 }}>{u}</span></div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: "flex", gap: 7, marginTop: 12, justifyContent: "center" }}>
-                  <div style={{ padding: "7px 12px", borderRadius: 6, background: BRACKET_META[popup.br].reusable ? "#00281a" : "#1c0208", border: `1.5px solid ${BRACKET_META[popup.br].hex}`, color: BRACKET_META[popup.br].hex, fontFamily: "'Orbitron',monospace", fontSize: 10, fontWeight: 700 }}>
-                    {popup.toA ? "→ TANK A · REUSABLE" : "→ TANK B · TREATMENT"}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Drift badge mobile */}
-            {showDrift && (
-              <div style={{ ...S.driftBadge, right: 8, top: "auto", bottom: sheetOpen ? "auto" : 100 }}>
-                <div className={driftState !== "normal" ? "pulse-dot" : ""} style={{ width: 6, height: 6, borderRadius: "50%", background: { normal: "#00ff9d", degraded: "#ffdb58", flatline: "#ff3f5a", recalibrating: "#00d4ff" }[driftState], flexShrink: 0 }} />
-                <span style={{ fontFamily: "'Space Mono',monospace", fontSize: 8, color: { normal: "#00ff9d", degraded: "#ffdb58", flatline: "#ff3f5a", recalibrating: "#00d4ff" }[driftState] }}>
-                  {{ normal: "NOMINAL", degraded: "⚠ DRIFT", flatline: "⛔ FLATLINE", recalibrating: "↻ RECAL" }[driftState]}
-                </span>
-              </div>
-            )}
+          {/* Phase dots — top left */}
+          <div style={{ position: "absolute", top: 10, left: 10, display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none" }}>
+            {PHASES.map((p, i) => {
+              const ci = PHASES.indexOf(phase), done = i < ci, cur = p === phase;
+              const c = PHASE_COLORS[p] || "#4a6580";
+              return <div key={p} style={{ width: cur ? 8 : 5, height: cur ? 8 : 5, borderRadius: "50%", background: cur ? c : done ? "#00ff9d33" : "#071828", boxShadow: cur ? `0 0 8px ${c}` : "none", transition: "all 0.3s" }} />;
+            })}
           </div>
 
-          {/* ── BOTTOM SHEET ── */}
-          <div style={{ ...S.panelMobile, height: sheetOpen ? "55vh" : 52 }}>
-            {/* Drag handle + tab bar */}
-            <div
-              onClick={() => setSheetOpen(p => !p)}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "10px 0 0", cursor: "pointer", flexShrink: 0 }}
-            >
-              <div style={{ width: 36, height: 4, borderRadius: 99, background: "#1a3a5a" }} />
-            </div>
-            <div style={S.tabBar}>
-              {[["controls", "Controls"], ["structure", "Tank"], ["matrix", "F1–F5"], ["log", "Log"]].map(([id, label]) => (
-                <button key={id} style={{ ...S.tabMobile, ...(activeTab === id ? S.tabActive : {}) }}
-                  onClick={e => { e.stopPropagation(); setActiveTab(id); setSheetOpen(true); }}>
-                  {label}
-                </button>
-              ))}
-            </div>
-            {/* Sheet content — scrollable */}
-            <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
-              {activeTab === "controls" && renderControlsTab()}
-              {activeTab === "structure" && renderStructureTab()}
-              {activeTab === "matrix" && renderMatrixTab()}
-              {activeTab === "log" && renderLogTab()}
-            </div>
+          {/* Tank levels — top right */}
+          <div style={{ position: "absolute", top: 10, right: 10, display: "flex", gap: 6, pointerEvents: "none" }}>
+            <TLvl label="A" sub="REUSE" level={tankALevel} col="#00ff9d" />
+            <TLvl label="B" sub="TREAT" level={tankBLevel} col="#ff3f5a" />
           </div>
+
+          {/* EC bar — top center */}
+          {ecActive && (
+            <div style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", background: "#030c16ee", border: "1px solid #ffdb5844", borderRadius: 6, padding: "5px 10px", pointerEvents: "none", display: "flex", alignItems: "center", gap: 7 }}>
+              <span style={{ fontFamily: "'Space Mono',monospace", fontSize: 8, color: "#ffdb58" }}>⚡</span>
+              <div style={{ width: 70, height: 3, background: "#071828", borderRadius: 99, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${(ecTimer / 900) * 100}%`, background: "linear-gradient(90deg,#00d4ff,#ffdb58)", transition: "width 0.4s", borderRadius: 99 }} />
+              </div>
+              <span style={{ fontFamily: "'Orbitron',monospace", fontSize: 8, color: "#ffdb58" }}>{Math.floor(ecTimer/60)}:{String(ecTimer%60).padStart(2,"0")}</span>
+            </div>
+          )}
+
+          {/* Sensor readout — bottom right */}
+          <div style={{ position: "absolute", bottom: 80, right: 10, background: "#030c16dd", border: "1px solid #0d2235", borderRadius: 8, padding: "8px 10px", pointerEvents: "none" }}>
+            {[
+              { label: "pH",   col: "#00ff9d", val: readings.ph.toFixed(2) },
+              { label: "TDS",  col: "#ff8c42", val: String(readings.tds) },
+              { label: "Turb", col: "#00d4ff", val: readings.turbidity.toFixed(1) },
+              { label: "ORP",  col: "#c084fc", val: String(readings.orp) },
+            ].map(s => (
+              <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                <span style={{ fontFamily: "'Space Mono',monospace", fontSize: 8, color: s.col, width: 22, flexShrink: 0 }}>{s.label}</span>
+                <span style={{ fontFamily: "'Orbitron',monospace", fontSize: 10, fontWeight: 700, color: s.col }}>{s.val}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Valve status — bottom left */}
+          <div style={{ position: "absolute", bottom: 80, left: 10, display: "flex", flexDirection: "column", gap: 5, pointerEvents: "none" }}>
+            {[{ label: "A", open: valveA > 0.5, col: "#00ff9d", dest: "Reuse" }, { label: "B", open: valveB > 0.5, col: "#ff3f5a", dest: "Treat" }].map(v => (
+              <div key={v.label} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 5, border: `1px solid ${v.open ? v.col + "66" : "#0d2235"}`, background: v.open ? v.col + "12" : "#030c16cc" }}>
+                <div style={{ width: 5, height: 5, borderRadius: "50%", background: v.open ? v.col : "#0d2235", boxShadow: v.open ? `0 0 6px ${v.col}` : "none" }} />
+                <span style={{ fontFamily: "'Space Mono',monospace", fontSize: 8, color: v.open ? v.col : "#1a3a5a", fontWeight: 700 }}>VALVE {v.label}{v.open ? " · " + v.dest : ""}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Classification popup */}
+          {lastResult && bracket && (phase === "ROUTING" || phase === "COMPLETE" || phase === "DRAINING") && (() => {
+            const m = BRACKET_META[bracket];
+            return (
+              <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-55%)", background: "#030c16ee", border: `1.5px solid ${m.hex}aa`, borderRadius: 14, padding: "16px 20px", textAlign: "center", pointerEvents: "none", minWidth: 160 }}>
+                <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 52, fontWeight: 900, color: m.hex, lineHeight: 1 }}>{bracket}</div>
+                <div style={{ fontSize: 12, color: "#c8e8f8", marginTop: 4 }}>{m.label}</div>
+                <div style={{ marginTop: 8, padding: "5px 10px", borderRadius: 5, background: m.reusable ? "#00281a" : "#1c0208", border: `1px solid ${m.hex}`, color: m.hex, fontFamily: "'Orbitron',monospace", fontSize: 9, fontWeight: 700 }}>
+                  {lastResult.toA ? "TANK A · REUSABLE" : "TANK B · TREATMENT"}
+                </div>
+              </div>
+            );
+          })()}
+
         </div>
       ) : (
         /* ══ DESKTOP LAYOUT ══ */
