@@ -32,7 +32,7 @@ const KPICard = memo(({
     const a = (window as any).anime;
     a({
       targets: objRef.current,
-      v: [0, card.value],
+      v: [card.value * 0.85, card.value],  // start near final value, no zero flash
       duration: 900 + index * 80,
       easing: "easeOutExpo",
       delay: index * 70,
@@ -92,7 +92,7 @@ const KPICard = memo(({
         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         lineHeight: 1,
       }}>
-        <span ref={valRef}>0{card.unit ?? ""}</span>
+        <span ref={valRef}>{card.value.toFixed(card.decimals)}{card.unit ?? ""}</span>
       </div>
     </div>
   );
