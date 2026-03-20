@@ -1209,14 +1209,15 @@ export default function GreywaterViz() {
     { id: "NH3",  label: "NH₃",        val: readings.nh3.toFixed(2),        unit: " mg/L",  col: "#ff6b8a", safe: [0,1],     pct: Math.min(readings.nh3 / 5, 1) * 100 },
   ], [readings]);
 
-  // Override body background to remove diagonal stripes on this page
+  // Remove diagonal body stripes while on this page
   useEffect(() => {
-    const prev = document.body.style.backgroundImage;
+    const prevImg = document.body.style.backgroundImage;
+    const prevCol = document.body.style.backgroundColor;
     document.body.style.backgroundImage = 'none';
     document.body.style.backgroundColor = '#020b14';
     return () => {
-      document.body.style.backgroundImage = prev;
-      document.body.style.backgroundColor = '';
+      document.body.style.backgroundImage = prevImg;
+      document.body.style.backgroundColor = prevCol;
     };
   }, []);
 
@@ -1817,3 +1818,132 @@ function TLvl({ label, sub, level, col }) {
     </div>
   );
 }
+
+// ─── STYLES ───────────────────────────────────────────────────
+const S = {
+  root: { width: "100%", height: "calc(100dvh - 52px - var(--nav-h, 68px))", background: "#020b14", display: "flex", flexDirection: "column", fontFamily: "'Rajdhani',sans-serif", overflow: "hidden", color: "#c8e8f8" },
+  // Internal sub-header (48px on mobile, 52px on desktop)
+  header: { height: 52, background: "linear-gradient(90deg,#020b14,#030e1a 40%,#020b14)", borderBottom: "1px solid #071828", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", flexShrink: 0, gap: 10 },
+  logoRow: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0 },
+  logoPulse: { width: 8, height: 8, borderRadius: "50%", background: "#00ff9d", boxShadow: "0 0 14px #00ff9d", flexShrink: 0 },
+  logoText: { fontFamily: "'Orbitron',monospace", fontWeight: 900, fontSize: 17, letterSpacing: "0.04em", color: "#c8e8f8" },
+  logoDivider: { width: 1, height: 18, background: "#071828" },
+  logoSub: { fontSize: 9, color: "#1a3a5a", fontFamily: "'Space Mono',monospace", whiteSpace: "nowrap" },
+  headerCenter: { display: "flex", alignItems: "center", gap: 8, flex: 1, justifyContent: "center", minWidth: 0, overflow: "hidden" },
+  pill: { display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 5, border: "1px solid", fontFamily: "'Space Mono',monospace", fontSize: 9, fontWeight: 700, letterSpacing: "0.04em", transition: "all 0.3s", whiteSpace: "nowrap", flexShrink: 0 },
+  headerStats: { display: "flex", alignItems: "center", gap: 2, flexShrink: 0 },
+  hStat: { display: "flex", flexDirection: "column", alignItems: "center", gap: 1, padding: "2px 8px", borderLeft: "1px solid #071828" },
+  hint: { fontSize: 9, color: "#0d2235", fontFamily: "'Space Mono',monospace", borderLeft: "1px solid #071828", paddingLeft: 10 },
+  // Desktop: sidebar + canvas. Mobile: canvas fills, panel is bottom sheet
+  body: { flex: 1, display: "grid", gridTemplateColumns: "228px 1fr", overflow: "hidden" },
+  bodyMobile: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" },
+  panel: { background: "#030c16", borderRight: "1px solid #071828", display: "flex", flexDirection: "column", overflowY: "auto", overflowX: "hidden" },
+  // Mobile panel: bottom sheet
+  panelMobile: { position: "absolute", bottom: 0, left: 0, right: 0, background: "#030c16f5", borderTop: "1px solid #0d2235", display: "flex", flexDirection: "column", zIndex: 50, backdropFilter: "blur(16px)", borderRadius: "16px 16px 0 0", transition: "height 0.32s cubic-bezier(0.4,0,0.2,1)", overflow: "hidden" },
+  tabBar: { display: "flex", borderBottom: "1px solid #071828", flexShrink: 0 },
+  tab: { flex: 1, padding: "10px 0", background: "transparent", border: "none", color: "#1a4060", fontFamily: "'Space Mono',monospace", fontSize: 9, fontWeight: 700, cursor: "pointer", letterSpacing: "0.1em", transition: "all 0.2s", textTransform: "uppercase" },
+  tabMobile: { flex: 1, padding: "12px 0", background: "transparent", border: "none", color: "#1a4060", fontFamily: "'Space Mono',monospace", fontSize: 9, fontWeight: 700, cursor: "pointer", letterSpacing: "0.08em", transition: "all 0.2s", textTransform: "uppercase" },
+  tabActive: { color: "#00d4ff", borderBottom: "2px solid #00d4ff", background: "#00d4ff08" },
+  canvasWrap: { position: "relative", overflow: "hidden", touchAction: "none" },
+  canvasWrapMobile: { flex: 1, position: "relative", overflow: "hidden", touchAction: "none" },
+  canvas: { width: "100%", height: "100%", display: "block", touchAction: "none", userSelect: "none" },
+  modal: { position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-55%)", background: "linear-gradient(135deg,#030c16,#071828)", border: "1.5px solid", borderRadius: 16, padding: "20px 24px 18px", minWidth: 280, maxWidth: "90vw", textAlign: "center", zIndex: 200 },
+  closeBtn: { position: "absolute", top: 10, right: 12, background: "transparent", border: "1px solid #0d2235", borderRadius: "50%", color: "#1a3a5a", fontSize: 11, cursor: "pointer", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s" },
+  phaseTimeline: { position: "absolute", top: 10, left: 10, background: "#030c16ee", border: "1px solid #071828", borderRadius: 8, padding: "8px 10px", backdropFilter: "blur(10px)", pointerEvents: "none" },
+  legend: { position: "absolute", bottom: 56, left: 10, display: "flex", flexDirection: "column", gap: 4, background: "#030c16ee", border: "1px solid #071828", padding: "7px 10px", borderRadius: 7, backdropFilter: "blur(10px)", pointerEvents: "none" },
+  valveRow: { position: "absolute", bottom: 10, left: 10, display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none" },
+  tankLevels: { position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 14, pointerEvents: "none" },
+  sparkPanel: { position: "absolute", bottom: 10, right: 10, width: 200, background: "#030c16ee", border: "1px solid #0d2235", borderRadius: 8, padding: "9px 11px", backdropFilter: "blur(12px)", pointerEvents: "none" },
+  analyticsPanel: { position: "absolute", top: 10, right: 10, width: 160, background: "#030c16ee", border: "1px solid #071828", borderRadius: 8, padding: "9px 11px", backdropFilter: "blur(12px)", pointerEvents: "none" },
+  driftBadge: { position: "absolute", top: 10, right: 180, display: "flex", alignItems: "center", gap: 7, padding: "5px 10px", borderRadius: 5, border: "1px solid", backdropFilter: "blur(8px)", pointerEvents: "none" },
+};
+
+// ─── GLOBAL CSS ───────────────────────────────────────────────
+const CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Space+Mono:wght@400;700&family=Rajdhani:wght@300;400;500;600;700&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{-webkit-text-size-adjust:100%;}
+  body{overscroll-behavior:none;-webkit-tap-highlight-color:transparent;}
+  ::-webkit-scrollbar{width:3px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  ::-webkit-scrollbar-thumb{background:#0d2235;border-radius:2px;}
+
+  @keyframes pulseDot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.5;transform:scale(0.7)}}
+  @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  @keyframes modalIn{from{opacity:0;transform:translate(-50%,-60%) scale(0.88)}to{opacity:1;transform:translate(-50%,-55%) scale(1)}}
+  @keyframes logSlide{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  @keyframes saltFade{0%{opacity:1;transform:translateY(0)}80%{opacity:1}100%{opacity:0;transform:translateY(-6px)}}
+  @keyframes ecPulse{0%,100%{box-shadow:0 0 6px #ffdb5866}50%{box-shadow:0 0 18px #ffdb58cc}}
+  @keyframes sheetUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+
+  .pulse-dot{animation:pulseDot 1.4s infinite;}
+  .spin-icon{display:inline-block;animation:spin 1s linear infinite;}
+  .modal-in{animation:modalIn 0.38s cubic-bezier(0.34,1.56,0.64,1);}
+  .ec-active-disc{animation:ecPulse 1.2s infinite;}
+
+  .btn-primary{
+    width:100%;padding:12px;border-radius:8px;
+    border:1px solid #00d4ff66;background:linear-gradient(135deg,#00d4ff0d,#00ff9d0d);
+    color:#00d4ff;font-family:'Orbitron',monospace;font-size:11px;font-weight:700;
+    letter-spacing:0.08em;cursor:pointer;transition:all 0.2s;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+  }
+  .btn-primary:hover:not(:disabled){background:linear-gradient(135deg,#00d4ff1a,#00ff9d1a);box-shadow:0 0 20px #00d4ff22;border-color:#00d4ffaa;}
+  .btn-primary:disabled{cursor:not-allowed;opacity:0.4;}
+
+  .btn-running{
+    width:100%;padding:12px;border-radius:8px;
+    border:1px solid #00d4ff33;background:#00d4ff08;
+    color:#00d4ff66;font-family:'Orbitron',monospace;font-size:11px;font-weight:700;
+    letter-spacing:0.08em;cursor:not-allowed;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+  }
+
+  .btn-sec{
+    padding:10px 12px;border-radius:6px;border:1px solid #0d2235;background:#030c16;
+    font-family:'Space Mono',monospace;font-size:9.5px;font-weight:700;cursor:pointer;
+    letter-spacing:0.05em;transition:all 0.2s;color:#2a5070;
+    -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+  }
+  .btn-sec:active:not(:disabled){filter:brightness(1.5);border-color:currentColor;}
+  .btn-sec:hover:not(:disabled){filter:brightness(1.5);border-color:currentColor;}
+  .btn-sec:disabled{opacity:0.3;cursor:not-allowed;}
+  .btn-yellow{color:#ffdb58;border-color:#ffdb5822;}
+  .btn-ghost{color:#4a7090;border-color:#0d2235;}
+  .btn-blue{color:#00d4ff;border-color:#00d4ff22;}
+
+  input[type=range].slider{
+    width:100%;-webkit-appearance:none;height:4px;border-radius:99px;
+    background:#071828;cursor:pointer;outline:none;
+  }
+  input[type=range].slider::-webkit-slider-thumb{
+    -webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+    background:var(--sc,#00d4ff);border:2px solid var(--sc,#00d4ff);
+    box-shadow:0 0 8px var(--sc,#00d4ff);cursor:pointer;transition:transform 0.15s;
+  }
+  input[type=range].slider::-webkit-slider-thumb:hover{transform:scale(1.3);}
+  input[type=range].slider:disabled{opacity:0.3;cursor:not-allowed;}
+
+  .sensor-card{
+    border:1px solid;border-radius:8px;padding:10px 12px;margin-bottom:6px;
+    cursor:pointer;transition:all 0.25s;-webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;
+  }
+  .sensor-card:active{filter:brightness(1.1);}
+
+  .log-entry{
+    font-family:'Space Mono',monospace;font-size:9px;padding:6px 10px;border-radius:4px;
+    border:1px solid;line-height:1.55;animation:logSlide 0.3s ease;
+    margin-bottom:3px;
+  }
+
+  /* ── MOBILE overrides ─────────────────────────── */
+  @media (max-width:767px){
+    .hide-mobile{display:none!important;}
+    .btn-primary{font-size:12px;padding:14px;}
+    .btn-sec{padding:11px 14px;font-size:10px;}
+    input[type=range].slider::-webkit-slider-thumb{width:22px;height:22px;}
+    .sensor-card{padding:12px 14px;margin-bottom:8px;}
+  }
+`;
