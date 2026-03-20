@@ -6,7 +6,7 @@ export default function Layout() {
   return (
     <>
       <TopBar />
-      <main style={{ height: "calc(100dvh - 52px - var(--nav-h, 68px))", overflow: "hidden" }}>
+      <main style={{ height: "calc(100dvh - 52px - var(--nav-h, 68px))", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
         <Outlet />
       </main>
       <BottomNav />
