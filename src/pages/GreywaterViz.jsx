@@ -174,16 +174,27 @@ const _tmpColor = new THREE.Color();
 
 // ─── SCENE BUILDER ────────────────────────────────────────────
 function buildScene(canvas, getState, isMob = false) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
+  // Derive real pixel dimensions — never trust canvas.clientWidth/Height on mobile
+  // as CSS 100% may not have resolved. Use the parent or window as ground truth.
+  const W = canvas.parentElement?.clientWidth  || canvas.clientWidth  || window.innerWidth;
+  const H = canvas.parentElement?.clientHeight || canvas.clientHeight ||
+            (window.innerHeight - (isMob ? 120 : 0));
+
+  // Force canvas DOM attributes to real pixels BEFORE creating renderer
+  // This is what actually allocates the WebGL framebuffer at the right size
+  canvas.width  = Math.round(W * (isMob ? 1 : Math.min(window.devicePixelRatio, 2)));
+  canvas.height = Math.round(H * (isMob ? 1 : Math.min(window.devicePixelRatio, 2)));
+
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMob, alpha: false, powerPreference: "high-performance" });
   renderer.setPixelRatio(isMob ? 1 : Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+  renderer.setSize(W, H, false); // false = don't override canvas style
   renderer.shadowMap.enabled = !isMob;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = isMob ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.25;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-  const camera = new THREE.PerspectiveCamera(40, canvas.clientWidth / canvas.clientHeight, 0.1, 120);
+  const camera = new THREE.PerspectiveCamera(40, W / H, 0.1, 120);
   camera.position.set(6.2, 3.8, 7.0);
   camera.lookAt(0, 0.3, 0);
 
