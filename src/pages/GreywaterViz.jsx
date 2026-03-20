@@ -173,13 +173,13 @@ const oilFS = `
 const _tmpColor = new THREE.Color();
 
 // ─── SCENE BUILDER ────────────────────────────────────────────
-function buildScene(canvas, getState) {
+function buildScene(canvas, getState, isMob = false) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(isMob ? Math.min(window.devicePixelRatio, 1) : Math.min(window.devicePixelRatio, 2));
   renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = !isMob;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMapping = isMob ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.25;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
@@ -189,7 +189,7 @@ function buildScene(canvas, getState) {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x020b14);
-  scene.fog = new THREE.FogExp2(0x020b14, 0.032);
+  if (!isMob) scene.fog = new THREE.FogExp2(0x020b14, 0.032);
 
   // Collect all disposables for cleanup
   const disposables = [];
@@ -260,7 +260,7 @@ function buildScene(canvas, getState) {
 
   const keyL = new THREE.DirectionalLight(0xd8eeff, 1.6);
   keyL.position.set(6, 10, 5); keyL.castShadow = true;
-  keyL.shadow.mapSize.set(2048, 2048);
+  keyL.shadow.mapSize.set(isMob ? 512 : 2048, isMob ? 512 : 2048);
   keyL.shadow.camera.far = 30; keyL.shadow.camera.left = -9; keyL.shadow.camera.right = 9;
   keyL.shadow.camera.top = 9; keyL.shadow.camera.bottom = -9;
   scene.add(keyL);
@@ -286,14 +286,15 @@ function buildScene(canvas, getState) {
   ground.rotation.x = -Math.PI / 2; ground.position.y = -2.4; ground.receiveShadow = true; scene.add(ground);
   const grid = new THREE.GridHelper(30, 36, 0x0d2235, 0x071828); grid.position.y = -2.38; scene.add(grid);
 
-  // ── Apartment building ─────────────────────────────────────
+  // ── Apartment building (skip on mobile for perf) ───────────
+  const windowMats = [];
+  if (!isMob) {
   const aptGroup = new THREE.Group(); aptGroup.position.set(0, 4.2, -4.0);
   const buildGeo = new THREE.BoxGeometry(5.0, 4.0, 0.08);
   disposables.push(buildGeo);
   aptGroup.add(new THREE.Mesh(buildGeo, new THREE.MeshStandardMaterial({ color: 0x071828, transparent: true, opacity: 0.45, side: THREE.DoubleSide })));
   aptGroup.add(new THREE.LineSegments(new THREE.EdgesGeometry(buildGeo), new THREE.LineBasicMaterial({ color: 0x1a4060, transparent: true, opacity: 0.5 })));
 
-  const windowMats = [];
   for (let col = -1.8; col <= 1.8; col += 0.9) {
     for (let row = -1.0; row <= 1.1; row += 0.88) {
       const wm = new THREE.MeshStandardMaterial({ color: 0x9ec8e8, transparent: true, opacity: 0.38, emissive: 0x3a80c0, emissiveIntensity: 0.1 });
@@ -310,6 +311,8 @@ function buildScene(canvas, getState) {
   sinkM.position.set(1.9, -0.5, 0.06); aptGroup.add(sinkM);
   scene.add(aptGroup);
 
+  } // end !isMob apartment block
+
   const bPipeMat = new THREE.MeshStandardMaterial({ color: 0x2a4060, metalness: 0.90, roughness: 0.20 });
   disposables.push(bPipeMat);
   const bPipeVert = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 5.5, 12), bPipeMat);
@@ -323,13 +326,13 @@ function buildScene(canvas, getState) {
 
   const shellMat = new THREE.MeshPhysicalMaterial({ color: 0xb0d8f5, transparent: true, opacity: 0.09, roughness: 0, metalness: 0, transmission: 0.92, thickness: 0.6, ior: 1.45, side: THREE.DoubleSide, depthWrite: false });
   disposables.push(shellMat);
-  chamberGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R, CHAM_R, CHAM_H, 96, 2, true), shellMat));
-  chamberGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R * 0.97, CHAM_R * 0.97, CHAM_H, 96, 1, true), new THREE.MeshPhysicalMaterial({ color: 0x88c8f0, transparent: true, opacity: 0.04, roughness: 0, side: THREE.BackSide, depthWrite: false })));
+  chamberGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R, CHAM_R, CHAM_H, isMob ? 48 : 96, 2, true), shellMat));
+  chamberGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R * 0.97, CHAM_R * 0.97, CHAM_H, isMob ? 48 : 96, 1, true), new THREE.MeshPhysicalMaterial({ color: 0x88c8f0, transparent: true, opacity: 0.04, roughness: 0, side: THREE.BackSide, depthWrite: false })));
 
   const topCap = new THREE.Mesh(new THREE.CircleGeometry(CHAM_R, 96), new THREE.MeshPhysicalMaterial({ color: 0xb0d8f5, transparent: true, opacity: 0.18, roughness: 0, side: THREE.DoubleSide, depthWrite: false }));
   topCap.rotation.x = -Math.PI / 2; topCap.position.y = CHAM_H / 2; chamberGroup.add(topCap);
 
-  const coneMesh = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R, 0.10, coneH, 64, 1, true), new THREE.MeshPhysicalMaterial({ color: 0xa0c8e8, transparent: true, opacity: 0.14, roughness: 0, side: THREE.DoubleSide, depthWrite: false }));
+  const coneMesh = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R, 0.10, coneH, isMob ? 32 : 64, 1, true), new THREE.MeshPhysicalMaterial({ color: 0xa0c8e8, transparent: true, opacity: 0.14, roughness: 0, side: THREE.DoubleSide, depthWrite: false }));
   coneMesh.position.y = -(CHAM_H / 2 + coneH / 2 - 0.01); chamberGroup.add(coneMesh);
 
   [-CHAM_H / 2 + 0.15, -0.55, 0.2, 0.95, CHAM_H / 2 - 0.15].forEach(y => {
@@ -342,7 +345,7 @@ function buildScene(canvas, getState) {
   const waterUniforms = { uTime: { value: 0 }, uSwirl: { value: 0 }, uContam: { value: 0.2 }, uOpacity: { value: 0.52 }, uFill: { value: 0 } };
   const waterMat = new THREE.ShaderMaterial({ vertexShader: waterVS, fragmentShader: waterFS, uniforms: waterUniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide });
   disposables.push(waterMat);
-  const waterMesh = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R * 0.965, CHAM_R * 0.965, CHAM_H * 0.95, 72, 16), waterMat);
+  const waterMesh = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R * 0.965, CHAM_R * 0.965, CHAM_H * 0.95, isMob ? 40 : 72, isMob ? 8 : 16), waterMat);
   waterMesh.visible = false; chamberGroup.add(waterMesh);
 
   // Oil surface ──
@@ -412,20 +415,20 @@ function buildScene(canvas, getState) {
     housing.position.set(s.pos[0], s.pos[1] + 0.14, s.pos[2]); chamberGroup.add(housing);
     const bulbMat = new THREE.MeshStandardMaterial({ color: s.col, emissive: new THREE.Color(s.col), emissiveIntensity: 0.45, metalness: 0.25, roughness: 0.35 });
     disposables.push(bulbMat);
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.045, 20, 20), bulbMat);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.045, isMob ? 10 : 20, isMob ? 10 : 20), bulbMat);
     bulb.position.set(s.pos[0], s.pos[1] - 0.46, s.pos[2]);
     bulb.userData = { id: s.id, label: s.label, col: s.col };
     sensorBulbs.push(bulb); chamberGroup.add(bulb);
     const glowMat = new THREE.MeshStandardMaterial({ color: s.col, transparent: true, opacity: 0.08, emissive: new THREE.Color(s.col), emissiveIntensity: 1.0, side: THREE.BackSide, depthWrite: false });
     disposables.push(glowMat);
-    const glowSph = new THREE.Mesh(new THREE.SphereGeometry(0.07, 16, 16), glowMat);
+    const glowSph = new THREE.Mesh(new THREE.SphereGeometry(0.07, isMob ? 8 : 16, isMob ? 8 : 16), glowMat);
     glowSph.position.copy(bulb.position); chamberGroup.add(glowSph);
   });
 
   // Classification glow shell ──
   const glowShellMat = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0, emissiveIntensity: 1.0, side: THREE.BackSide, depthWrite: false });
   disposables.push(glowShellMat);
-  const glowShell = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R + 0.06, CHAM_R + 0.06, CHAM_H + 0.12, 72, 1, true), glowShellMat);
+  const glowShell = new THREE.Mesh(new THREE.CylinderGeometry(CHAM_R + 0.06, CHAM_R + 0.06, CHAM_H + 0.12, isMob ? 36 : 72, 1, true), glowShellMat);
   chamberGroup.add(glowShell);
   scene.add(chamberGroup);
 
@@ -472,14 +475,14 @@ function buildScene(canvas, getState) {
 
     const tankShellMat = new THREE.MeshPhysicalMaterial({ color: 0x90c8e8, transparent: true, opacity: 0.11, roughness: 0, transmission: 0.88, thickness: 0.4, ior: 1.45, side: THREE.DoubleSide, depthWrite: false });
     disposables.push(tankShellMat);
-    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R, T_R, T_H, 72, 2, true), tankShellMat));
-    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R * 0.97, T_R * 0.97, T_H, 72, 1, true), new THREE.MeshPhysicalMaterial({ color: 0x60a8d8, transparent: true, opacity: 0.03, roughness: 0, side: THREE.BackSide, depthWrite: false })));
+    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R, T_R, T_H, isMob ? 36 : 72, 2, true), tankShellMat));
+    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R * 0.97, T_R * 0.97, T_H, isMob ? 36 : 72, 1, true), new THREE.MeshPhysicalMaterial({ color: 0x60a8d8, transparent: true, opacity: 0.03, roughness: 0, side: THREE.BackSide, depthWrite: false })));
 
     const botDisc = new THREE.Mesh(new THREE.CircleGeometry(T_R, 72), new THREE.MeshStandardMaterial({ color: 0x0d1e30, roughness: 0.85, metalness: 0.15 }));
     botDisc.rotation.x = -Math.PI / 2; botDisc.position.y = -T_H / 2; grp.add(botDisc);
 
     const fillMat = new THREE.MeshStandardMaterial({ color: col, transparent: true, opacity: 0.40, emissive: new THREE.Color(col), emissiveIntensity: 0.05, depthWrite: false });
-    const fillMesh = new THREE.Mesh(new THREE.CylinderGeometry(T_R * 0.93, T_R * 0.93, T_H, 48), fillMat);
+    const fillMesh = new THREE.Mesh(new THREE.CylinderGeometry(T_R * 0.93, T_R * 0.93, T_H, isMob ? 24 : 48), fillMat);
     grp.add(fillMesh); disposables.push(fillMat);
 
     const surfaceMat = new THREE.MeshStandardMaterial({ color: col, transparent: true, opacity: 0.55, emissive: new THREE.Color(col), emissiveIntensity: 0.08, depthWrite: false });
@@ -487,7 +490,7 @@ function buildScene(canvas, getState) {
     surfaceMesh.rotation.x = -Math.PI / 2; grp.add(surfaceMesh); disposables.push(surfaceMat);
 
     const glowMat = new THREE.MeshStandardMaterial({ color: col, transparent: true, opacity: 0.025, emissive: new THREE.Color(col), emissiveIntensity: 1.0, side: THREE.BackSide, depthWrite: false });
-    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R + 0.035, T_R + 0.035, T_H + 0.07, 72, 1, true), glowMat));
+    grp.add(new THREE.Mesh(new THREE.CylinderGeometry(T_R + 0.035, T_R + 0.035, T_H + 0.07, isMob ? 36 : 72, 1, true), glowMat));
     disposables.push(glowMat);
 
     [-T_H / 2 + 0.12, -T_H * 0.18, T_H * 0.18, T_H / 2 - 0.12].forEach(y => {
@@ -510,7 +513,7 @@ function buildScene(canvas, getState) {
   // ══ PARTICLE SYSTEMS ══════════════════════════════════════
 
   // Sludge ──
-  const SL = 280;
+  const SL = isMob ? 80 : 280;
   const slPos = new Float32Array(SL * 3);
   for (let i = 0; i < SL; i++) { const r = Math.random() * 0.62, a = Math.random() * Math.PI * 2; slPos[i * 3] = Math.cos(a) * r; slPos[i * 3 + 1] = -1.32 + Math.random() * 0.28; slPos[i * 3 + 2] = Math.sin(a) * r; }
   const slGeo = new THREE.BufferGeometry(); slGeo.setAttribute("position", new THREE.BufferAttribute(slPos, 3));
@@ -519,7 +522,7 @@ function buildScene(canvas, getState) {
   disposables.push(slGeo, slMat);
 
   // Oil droplets ──
-  const OIL = 80;
+  const OIL = isMob ? 25 : 80;
   const oilPos = new Float32Array(OIL * 3);
   for (let i = 0; i < OIL; i++) { const r = Math.random() * 0.68, a = Math.random() * Math.PI * 2; oilPos[i * 3] = Math.cos(a) * r; oilPos[i * 3 + 1] = 0.65 + Math.random() * 0.18; oilPos[i * 3 + 2] = Math.sin(a) * r; }
   const oilPGeo = new THREE.BufferGeometry(); oilPGeo.setAttribute("position", new THREE.BufferAttribute(oilPos, 3));
@@ -528,7 +531,7 @@ function buildScene(canvas, getState) {
   disposables.push(oilPGeo, oilPMat);
 
   // Rising micro-bubbles ──
-  const BUB = 55;
+  const BUB = isMob ? 20 : 55;
   const bubPos = new Float32Array(BUB * 3), bubAge = new Float32Array(BUB), bubLife = new Float32Array(BUB);
   for (let i = 0; i < BUB; i++) { const r = Math.random() * 0.55, a = Math.random() * Math.PI * 2; bubPos[i * 3] = Math.cos(a) * r; bubPos[i * 3 + 1] = -1.3 + Math.random() * 2.4; bubPos[i * 3 + 2] = Math.sin(a) * r; bubAge[i] = Math.random() * 2.5; bubLife[i] = 1.8 + Math.random() * 1.2; }
   const bubGeo = new THREE.BufferGeometry(); bubGeo.setAttribute("position", new THREE.BufferAttribute(bubPos, 3));
@@ -537,7 +540,7 @@ function buildScene(canvas, getState) {
   disposables.push(bubGeo, bubMat);
 
   // Apartment stream ──
-  const STREAM = 120;
+  const STREAM = isMob ? 40 : 120;
   const stPos = new Float32Array(STREAM * 3), stVel = new Float32Array(STREAM * 3);
   const stAge = new Float32Array(STREAM), stLife = new Float32Array(STREAM);
   for (let i = 0; i < STREAM; i++) {
@@ -554,7 +557,7 @@ function buildScene(canvas, getState) {
   disposables.push(stGeo, stMat);
 
   // Splash ──
-  const SPLASH = 40;
+  const SPLASH = isMob ? 12 : 40;
   const splPos = new Float32Array(SPLASH * 3), splVel = new Float32Array(SPLASH * 3);
   const splAge = new Float32Array(SPLASH), splLife = new Float32Array(SPLASH);
   for (let i = 0; i < SPLASH; i++) {
@@ -568,7 +571,7 @@ function buildScene(canvas, getState) {
   disposables.push(splGeo, splMat);
 
   // Inlet swirl ──
-  const IN = 90;
+  const IN = isMob ? 30 : 90;
   const inP = new Float32Array(IN * 3), inV = new Float32Array(IN * 3), inA = new Float32Array(IN), inL = new Float32Array(IN);
   for (let i = 0; i < IN; i++) {
     inP[i * 3] = 0.88; inP[i * 3 + 1] = 0.40; inP[i * 3 + 2] = 0;
@@ -693,8 +696,12 @@ function buildScene(canvas, getState) {
   let raf, lastTime = 0;
   const clock = new THREE.Clock();
 
+  let frameCount = 0;
   function animate(nowMs) {
     raf = requestAnimationFrame(animate);
+    frameCount++;
+    // On mobile skip every other frame for battery/perf
+    if (isMob && frameCount % 2 !== 0) return;
     const t  = clock.getElapsedTime();              // monotonic elapsed
     const dt = Math.min((nowMs - lastTime) / 1000, 0.05); // real delta from rAF timestamp
     lastTime = nowMs;
@@ -1063,9 +1070,15 @@ export default function GreywaterViz() {
   // Mount scene once; also clear any pending cycle timers on unmount
   useEffect(() => {
     const canvas = canvasRef.current;
-    const cleanupScene = buildScene(canvas, () => stateRef.current);
+    const mobile = window.innerWidth < 768;
+    let cleanupScene = null;
+    // Defer one frame so canvas has real dimensions (critical on mobile)
+    const rafId = requestAnimationFrame(() => {
+      cleanupScene = buildScene(canvas, () => stateRef.current, mobile);
+    });
     return () => {
-      cleanupScene();
+      cancelAnimationFrame(rafId);
+      if (cleanupScene) cleanupScene();
       cycleTimers.current.forEach(id => clearTimeout(id));
       cycleTimers.current = [];
     };
@@ -1086,7 +1099,7 @@ export default function GreywaterViz() {
       setSparkTDS (p => [...p.slice(1), +(p[p.length-1] + (Math.random()-0.5)*5   ).toFixed(0)]);
       setSparkTurb(p => [...p.slice(1), +(p[p.length-1] + (Math.random()-0.5)*0.08).toFixed(2)]);
       setSparkORP (p => [...p.slice(1), +(p[p.length-1] + (Math.random()-0.5)*4   ).toFixed(0)]);
-    }, 700);
+    }, window.innerWidth < 768 ? 1400 : 700);
     return () => clearInterval(iv);
   }, [running]);
 
@@ -1209,14 +1222,15 @@ export default function GreywaterViz() {
     { id: "NH3",  label: "NH₃",        val: readings.nh3.toFixed(2),        unit: " mg/L",  col: "#ff6b8a", safe: [0,1],     pct: Math.min(readings.nh3 / 5, 1) * 100 },
   ], [readings]);
 
-  // Override body background to remove diagonal stripes on this page
+  // Remove diagonal body stripes while on this page
   useEffect(() => {
-    const prev = document.body.style.backgroundImage;
+    const prevImg = document.body.style.backgroundImage;
+    const prevCol = document.body.style.backgroundColor;
     document.body.style.backgroundImage = 'none';
     document.body.style.backgroundColor = '#020b14';
     return () => {
-      document.body.style.backgroundImage = prev;
-      document.body.style.backgroundColor = '';
+      document.body.style.backgroundImage = prevImg;
+      document.body.style.backgroundColor = prevCol;
     };
   }, []);
 
@@ -1820,58 +1834,129 @@ function TLvl({ label, sub, level, col }) {
 
 // ─── STYLES ───────────────────────────────────────────────────
 const S = {
-  root: { width: "100%", height: "100dvh", background: "#020b14", display: "flex", flexDirection: "column", fontFamily: "'Rajdhani',sans-serif", color: "#c8e8f8", overflow: "hidden" },
-  header: { height: 52, minHeight: 52, background: "#010810", borderBottom: "1px solid #071828", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 14px", gap: 10, flexShrink: 0 },
-  logoRow: { display: "flex", alignItems: "center", gap: 8 },
-  logoPulse: { width: 8, height: 8, borderRadius: "50%", background: "#00ff9d", boxShadow: "0 0 12px #00ff9d", flexShrink: 0 },
-  logoText: { fontFamily: "'Orbitron',monospace", fontWeight: 900, fontSize: 16, color: "#c8e8f8" },
-  body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" },
-  canvasWrap: { flex: 1, minHeight: 0, position: "relative", overflow: "hidden", touchAction: "none" },
+  root: { width: "100%", height: "calc(100dvh - 52px - var(--nav-h, 68px))", background: "#020b14", display: "flex", flexDirection: "column", fontFamily: "'Rajdhani',sans-serif", overflow: "hidden", color: "#c8e8f8" },
+  // Internal sub-header (48px on mobile, 52px on desktop)
+  header: { height: 52, background: "linear-gradient(90deg,#020b14,#030e1a 40%,#020b14)", borderBottom: "1px solid #071828", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", flexShrink: 0, gap: 10 },
+  logoRow: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0 },
+  logoPulse: { width: 8, height: 8, borderRadius: "50%", background: "#00ff9d", boxShadow: "0 0 14px #00ff9d", flexShrink: 0 },
+  logoText: { fontFamily: "'Orbitron',monospace", fontWeight: 900, fontSize: 17, letterSpacing: "0.04em", color: "#c8e8f8" },
+  logoDivider: { width: 1, height: 18, background: "#071828" },
+  logoSub: { fontSize: 9, color: "#1a3a5a", fontFamily: "'Space Mono',monospace", whiteSpace: "nowrap" },
+  headerCenter: { display: "flex", alignItems: "center", gap: 8, flex: 1, justifyContent: "center", minWidth: 0, overflow: "hidden" },
+  pill: { display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 5, border: "1px solid", fontFamily: "'Space Mono',monospace", fontSize: 9, fontWeight: 700, letterSpacing: "0.04em", transition: "all 0.3s", whiteSpace: "nowrap", flexShrink: 0 },
+  headerStats: { display: "flex", alignItems: "center", gap: 2, flexShrink: 0 },
+  hStat: { display: "flex", flexDirection: "column", alignItems: "center", gap: 1, padding: "2px 8px", borderLeft: "1px solid #071828" },
+  hint: { fontSize: 9, color: "#0d2235", fontFamily: "'Space Mono',monospace", borderLeft: "1px solid #071828", paddingLeft: 10 },
+  // Desktop: sidebar + canvas. Mobile: canvas fills, panel is bottom sheet
+  body: { flex: 1, display: "grid", gridTemplateColumns: "228px 1fr", overflow: "hidden" },
+  bodyMobile: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" },
+  panel: { background: "#030c16", borderRight: "1px solid #071828", display: "flex", flexDirection: "column", overflowY: "auto", overflowX: "hidden" },
+  // Mobile panel: bottom sheet
+  panelMobile: { position: "absolute", bottom: 0, left: 0, right: 0, background: "#030c16f5", borderTop: "1px solid #0d2235", display: "flex", flexDirection: "column", zIndex: 50, backdropFilter: "blur(16px)", borderRadius: "16px 16px 0 0", transition: "height 0.32s cubic-bezier(0.4,0,0.2,1)", overflow: "hidden" },
+  tabBar: { display: "flex", borderBottom: "1px solid #071828", flexShrink: 0 },
+  tab: { flex: 1, padding: "10px 0", background: "transparent", border: "none", color: "#1a4060", fontFamily: "'Space Mono',monospace", fontSize: 9, fontWeight: 700, cursor: "pointer", letterSpacing: "0.1em", transition: "all 0.2s", textTransform: "uppercase" },
+  tabMobile: { flex: 1, padding: "12px 0", background: "transparent", border: "none", color: "#1a4060", fontFamily: "'Space Mono',monospace", fontSize: 9, fontWeight: 700, cursor: "pointer", letterSpacing: "0.08em", transition: "all 0.2s", textTransform: "uppercase" },
+  tabActive: { color: "#00d4ff", borderBottom: "2px solid #00d4ff", background: "#00d4ff08" },
+  canvasWrap: { position: "relative", overflow: "hidden", touchAction: "none" },
+  canvasWrapMobile: { flex: 1, position: "relative", overflow: "hidden", touchAction: "none" },
   canvas: { width: "100%", height: "100%", display: "block", touchAction: "none", userSelect: "none" },
-  stages: { flexShrink: 0, height: 44, position: "relative", display: "flex", alignItems: "center", justifyContent: "space-around", padding: "0 8px 14px", background: "#030c16", borderTop: "1px solid #0d2235", overflow: "hidden" },
-  modal: { position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#030c16", border: "1px solid #0d2235", borderRadius: 12, padding: 16, zIndex: 100 },
-  closeBtn: { position: "absolute", top: 8, right: 10, background: "transparent", border: "none", color: "#4a7090", fontSize: 14, cursor: "pointer" },
-  driftBadge: { position: "absolute", top: 10, right: 10, display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 5, border: "1px solid #0d2235", backdropFilter: "blur(8px)", pointerEvents: "none" },
+  modal: { position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-55%)", background: "linear-gradient(135deg,#030c16,#071828)", border: "1.5px solid", borderRadius: 16, padding: "20px 24px 18px", minWidth: 280, maxWidth: "90vw", textAlign: "center", zIndex: 200 },
+  closeBtn: { position: "absolute", top: 10, right: 12, background: "transparent", border: "1px solid #0d2235", borderRadius: "50%", color: "#1a3a5a", fontSize: 11, cursor: "pointer", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s" },
+  phaseTimeline: { position: "absolute", top: 10, left: 10, background: "#030c16ee", border: "1px solid #071828", borderRadius: 8, padding: "8px 10px", backdropFilter: "blur(10px)", pointerEvents: "none" },
+  legend: { position: "absolute", bottom: 56, left: 10, display: "flex", flexDirection: "column", gap: 4, background: "#030c16ee", border: "1px solid #071828", padding: "7px 10px", borderRadius: 7, backdropFilter: "blur(10px)", pointerEvents: "none" },
+  valveRow: { position: "absolute", bottom: 10, left: 10, display: "flex", flexDirection: "column", gap: 4, pointerEvents: "none" },
+  tankLevels: { position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 14, pointerEvents: "none" },
+  sparkPanel: { position: "absolute", bottom: 10, right: 10, width: 200, background: "#030c16ee", border: "1px solid #0d2235", borderRadius: 8, padding: "9px 11px", backdropFilter: "blur(12px)", pointerEvents: "none" },
+  analyticsPanel: { position: "absolute", top: 10, right: 10, width: 160, background: "#030c16ee", border: "1px solid #071828", borderRadius: 8, padding: "9px 11px", backdropFilter: "blur(12px)", pointerEvents: "none" },
+  driftBadge: { position: "absolute", top: 10, right: 180, display: "flex", alignItems: "center", gap: 7, padding: "5px 10px", borderRadius: 5, border: "1px solid", backdropFilter: "blur(8px)", pointerEvents: "none" },
 };
 
 // ─── GLOBAL CSS ───────────────────────────────────────────────
 const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Mono:wght@400;700&family=Rajdhani:wght@400;500;600;700&display=swap');
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html { -webkit-text-size-adjust: 100%; }
-  body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
-  ::-webkit-scrollbar { width: 3px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #0d2235; border-radius: 2px; }
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Space+Mono:wght@400;700&family=Rajdhani:wght@300;400;500;600;700&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{-webkit-text-size-adjust:100%;}
+  body{overscroll-behavior:none;-webkit-tap-highlight-color:transparent;}
+  ::-webkit-scrollbar{width:3px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  ::-webkit-scrollbar-thumb{background:#0d2235;border-radius:2px;}
 
-  @keyframes pulseDot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.75)} }
-  @keyframes spin     { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+  @keyframes pulseDot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.5;transform:scale(0.7)}}
+  @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  @keyframes modalIn{from{opacity:0;transform:translate(-50%,-60%) scale(0.88)}to{opacity:1;transform:translate(-50%,-55%) scale(1)}}
+  @keyframes logSlide{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  @keyframes saltFade{0%{opacity:1;transform:translateY(0)}80%{opacity:1}100%{opacity:0;transform:translateY(-6px)}}
+  @keyframes ecPulse{0%,100%{box-shadow:0 0 6px #ffdb5866}50%{box-shadow:0 0 18px #ffdb58cc}}
+  @keyframes sheetUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
 
-  .pulse-dot { animation: pulseDot 1.4s ease-in-out infinite; }
-  .spin-icon { display: inline-block; animation: spin 1s linear infinite; }
+  .pulse-dot{animation:pulseDot 1.4s infinite;}
+  .spin-icon{display:inline-block;animation:spin 1s linear infinite;}
+  .modal-in{animation:modalIn 0.38s cubic-bezier(0.34,1.56,0.64,1);}
+  .ec-active-disc{animation:ecPulse 1.2s infinite;}
 
-  .btn-primary {
-    display: flex; align-items: center; justify-content: center; gap: 6px;
-    padding: 10px 20px; border-radius: 8px;
-    border: 1px solid #00d4ff66;
-    background: linear-gradient(135deg, #00d4ff0d, #00ff9d0d);
-    color: #00d4ff; font-family: 'Orbitron', monospace; font-size: 11px;
-    font-weight: 700; letter-spacing: 0.08em; cursor: pointer;
-    transition: all 0.2s; -webkit-tap-highlight-color: transparent;
-    touch-action: manipulation; white-space: nowrap;
+  .btn-primary{
+    width:100%;padding:12px;border-radius:8px;
+    border:1px solid #00d4ff66;background:linear-gradient(135deg,#00d4ff0d,#00ff9d0d);
+    color:#00d4ff;font-family:'Orbitron',monospace;font-size:11px;font-weight:700;
+    letter-spacing:0.08em;cursor:pointer;transition:all 0.2s;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    -webkit-tap-highlight-color:transparent;touch-action:manipulation;
   }
-  .btn-primary:hover:not(:disabled) {
-    background: linear-gradient(135deg, #00d4ff1a, #00ff9d1a);
-    box-shadow: 0 0 20px #00d4ff22; border-color: #00d4ffaa;
-  }
-  .btn-primary:disabled { cursor: not-allowed; opacity: 0.4; }
+  .btn-primary:hover:not(:disabled){background:linear-gradient(135deg,#00d4ff1a,#00ff9d1a);box-shadow:0 0 20px #00d4ff22;border-color:#00d4ffaa;}
+  .btn-primary:disabled{cursor:not-allowed;opacity:0.4;}
 
-  .btn-running {
-    display: flex; align-items: center; justify-content: center; gap: 6px;
-    padding: 10px 20px; border-radius: 8px;
-    border: 1px solid #00d4ff33; background: #00d4ff08;
-    color: #00d4ff66; font-family: 'Orbitron', monospace; font-size: 11px;
-    font-weight: 700; letter-spacing: 0.08em; cursor: not-allowed;
-    white-space: nowrap;
+  .btn-running{
+    width:100%;padding:12px;border-radius:8px;
+    border:1px solid #00d4ff33;background:#00d4ff08;
+    color:#00d4ff66;font-family:'Orbitron',monospace;font-size:11px;font-weight:700;
+    letter-spacing:0.08em;cursor:not-allowed;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+  }
+
+  .btn-sec{
+    padding:10px 12px;border-radius:6px;border:1px solid #0d2235;background:#030c16;
+    font-family:'Space Mono',monospace;font-size:9.5px;font-weight:700;cursor:pointer;
+    letter-spacing:0.05em;transition:all 0.2s;color:#2a5070;
+    -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+  }
+  .btn-sec:active:not(:disabled){filter:brightness(1.5);border-color:currentColor;}
+  .btn-sec:hover:not(:disabled){filter:brightness(1.5);border-color:currentColor;}
+  .btn-sec:disabled{opacity:0.3;cursor:not-allowed;}
+  .btn-yellow{color:#ffdb58;border-color:#ffdb5822;}
+  .btn-ghost{color:#4a7090;border-color:#0d2235;}
+  .btn-blue{color:#00d4ff;border-color:#00d4ff22;}
+
+  input[type=range].slider{
+    width:100%;-webkit-appearance:none;height:4px;border-radius:99px;
+    background:#071828;cursor:pointer;outline:none;
+  }
+  input[type=range].slider::-webkit-slider-thumb{
+    -webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+    background:var(--sc,#00d4ff);border:2px solid var(--sc,#00d4ff);
+    box-shadow:0 0 8px var(--sc,#00d4ff);cursor:pointer;transition:transform 0.15s;
+  }
+  input[type=range].slider::-webkit-slider-thumb:hover{transform:scale(1.3);}
+  input[type=range].slider:disabled{opacity:0.3;cursor:not-allowed;}
+
+  .sensor-card{
+    border:1px solid;border-radius:8px;padding:10px 12px;margin-bottom:6px;
+    cursor:pointer;transition:all 0.25s;-webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;
+  }
+  .sensor-card:active{filter:brightness(1.1);}
+
+  .log-entry{
+    font-family:'Space Mono',monospace;font-size:9px;padding:6px 10px;border-radius:4px;
+    border:1px solid;line-height:1.55;animation:logSlide 0.3s ease;
+    margin-bottom:3px;
+  }
+
+  /* ── MOBILE overrides ─────────────────────────── */
+  @media (max-width:767px){
+    .hide-mobile{display:none!important;}
+    .btn-primary{font-size:12px;padding:14px;}
+    .btn-sec{padding:11px 14px;font-size:10px;}
+    input[type=range].slider::-webkit-slider-thumb{width:22px;height:22px;}
+    .sensor-card{padding:12px 14px;margin-bottom:8px;}
   }
 `;
