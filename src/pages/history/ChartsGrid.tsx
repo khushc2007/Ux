@@ -1,460 +1,413 @@
 /* ============================================================
-   HistoryPage.tsx
-   Enterprise Admin Analytics Panel — WaterIQ
-   ─────────────────────────────────────────
-   Layout:
-     Top bar   → AnalyticsSummary
-     Body      → [FilterPanel | ChartsGrid] 2-column
-     Bottom    → DataExplorer
-
-   Extra features:
-     • Real-time clock + uptime counter
-     • Prediction confidence estimator (derived from stability)
-     • Animated gradient scan-line background
-     • anime.js CDN loader
-     • All data from localStorage("waterIQ_iterations")
-     • No backend calls, no auth, no database
+   ChartsGrid.tsx
+   5 pure-SVG / Canvas charts — no charting library needed.
+   anime.js: stroke-dashoffset draws, opacity stagger, arc wipe.
+   A) Multi-line trend (pH / TDS / turbidity)
+   B) Bracket distribution pie
+   C) Tank routing bar
+   D) Anomaly frequency heatmap
+   E) WQI trend line
 ============================================================ */
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { AnalyticsSummary }  from "./AnalyticsSummary";
-import { FilterPanel }       from "./FilterPanel";
-import { ChartsGrid }        from "./ChartsGrid";
-import { DataExplorer }      from "./DataExplorer";
-import {
-  type Iteration,
-  type FilterState,
-  normalise,
-  applyFilters,
-  computeGlobalStats,
-} from "./historyTypes";
+import { useEffect, useRef, memo, useMemo } from "react";
+import type { GlobalStats, NormIteration } from "./historyTypes";
+import { BRACKET_COLOR, wqiColor } from "./historyTypes";
 
-/* ── anime.js CDN loader (fires once) ── */
-function useAnimeJS(onReady: () => void) {
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if ((window as any).anime) { onReady(); return; }
-    const s    = document.createElement("script");
-    s.src      = "https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js";
-    s.async    = true;
-    s.onload   = onReady;
-    document.head.appendChild(s);
-  }, []); // eslint-disable-line
+declare const anime: any;
+
+const CHART_BG   = "#040b16";
+const GRID_COLOR = "#0d1f35";
+const LABEL_COLOR = "#334155";
+
+/* ── tiny helper: normalise array to [0,1] ── */
+function norm(arr: number[]): number[] {
+  const mn = Math.min(...arr), mx = Math.max(...arr);
+  if (mx === mn) return arr.map(() => 0.5);
+  return arr.map((v) => (v - mn) / (mx - mn));
 }
 
-/* ── Demo data seeder — uses correct Iteration shape from historyTypes.ts ── */
-function seedDemoData() {
-  const brackets = ["F1","F1","F2","F2","F2","F3","F4"];
-  const tanks    = ["T1","T2","T3"];
-  const modes: Array<"simulation"|"live"> = ["simulation","simulation","live"];
-  const sessionNames = [
-    "Morning Cycle","Afternoon Run","Pre-Treatment Pass","Post-Lamella Check",
-    "Night Cycle","UV Stage Verify","Emergency Flush","Routine Monitoring",
-    "High-Load Test","Baseline Calibration",
-  ];
-  const now = Date.now();
-
-  const iterations = Array.from({ length: 40 }, (_, i) => {
-    const bracket  = brackets[Math.floor(Math.random() * brackets.length)];
-    const reusable = bracket === "F1" || bracket === "F2" ? Math.random() > 0.1 : Math.random() > 0.6;
-    const ts       = now - (39 - i) * (7 * 24 * 60 * 60 * 1000 / 40) + (Math.random() - 0.5) * 1800000;
-    const tank     = tanks[Math.floor(Math.random() * tanks.length)];
-    const mode     = modes[Math.floor(Math.random() * modes.length)];
-    const name     = sessionNames[i % sessionNames.length] + " #" + (i + 1);
-
-    // Generate 8-15 raw sensor rows
-    const rowCount = 8 + Math.floor(Math.random() * 8);
-    const basePh   = 6.5 + Math.random() * 2;
-    const baseTurb = 0.5 + Math.random() * 7;
-    const baseTds  = 150 + Math.random() * 550;
-
-    const rows = Array.from({ length: rowCount }, (_, j) => ({
-      slNo: j + 1,
-      time: new Date(ts + j * 1500).toISOString(),
-      ph:        +(basePh   + (Math.random() - 0.5) * 0.4).toFixed(2),
-      turbidity: +(baseTurb + (Math.random() - 0.5) * 1.2).toFixed(2),
-      tds:       +(baseTds  + (Math.random() - 0.5) * 40 ).toFixed(1),
-      source: mode as "simulation" | "live" | "stream",
-    }));
-
-    const avg = {
-      ph:        +(rows.reduce((s,r) => s + r.ph,        0) / rows.length).toFixed(3),
-      turbidity: +(rows.reduce((s,r) => s + r.turbidity, 0) / rows.length).toFixed(3),
-      tds:       +(rows.reduce((s,r) => s + r.tds,       0) / rows.length).toFixed(1),
-    };
-
-    return {
-      id:        "demo_" + i,
-      name,
-      timestamp: new Date(ts).toISOString(),
-      mode,
-      rows,
-      avg,
-      prediction: {
-        bracket,
-        filtrationBracket: bracket,
-        reusable,
-        suggestedTank: tank,
-        tank,
-      },
-    };
-  });
-
-  localStorage.setItem("waterIQ_iterations", JSON.stringify(iterations));
+/* ── build SVG polyline points from normalised values ── */
+function toPoints(vals: number[], W: number, H: number, pad = 20): string {
+  if (!vals.length) return "";
+  const step = (W - pad * 2) / Math.max(vals.length - 1, 1);
+  return vals
+    .map((v, i) => `${pad + i * step},${pad + (1 - v) * (H - pad * 2)}`)
+    .join(" ");
 }
 
-/* ── Pre-seed demo data at module load so first render has data immediately ── */
-(function preSeed() {
-  try {
-    const stored = JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]");
-    if (stored.length === 0 || !stored[0]?.rows) seedDemoData();
-  } catch (_) {}
-})();
-
-/* ── Default filters ── */
-const DEFAULT_FILTERS: FilterState = {
-  bracket: "", tank: "", reusable: "", anomalyOnly: false,
-  sortKey: "date", sortAsc: false, dateFrom: "", dateTo: "",
-};
-
-/* ── Live clock ── */
-function useClock() {
-  const [now, setNow] = useState(new Date());
+/* ── ChartCard wrapper ── */
+const ChartCard = memo(({
+  title, subtitle, children,
+}: { title: string; subtitle?: string; children: React.ReactNode }) => {
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
+    if (!ref.current || typeof (window as any).anime === "undefined") return;
+    (window as any).anime({
+      targets: ref.current,
+      opacity: [0.9, 1], translateY: [4, 0],
+      duration: 600, easing: "easeOutExpo",
+    });
   }, []);
-  return now;
-}
-
-/* ── Uptime counter ── */
-function useUptime() {
-  const start  = useRef(Date.now());
-  const [secs, setSecs] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setSecs(Math.floor((Date.now() - start.current) / 1000)), 1000);
-    return () => clearInterval(id);
-  }, []);
-  const h = String(Math.floor(secs / 3600)).padStart(2, "0");
-  const m = String(Math.floor((secs % 3600) / 60)).padStart(2, "0");
-  const s = String(secs % 60).padStart(2, "0");
-  return `${h}:${m}:${s}`;
-}
+  return (
+    <div ref={ref} style={{
+      background: CHART_BG, border: "1px solid #0f2236",
+      borderRadius: 14, padding: 16, opacity: 1,
+    }}>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", color: "#38bdf8", textTransform: "uppercase" }}>
+          {title}
+        </div>
+        {subtitle && <div style={{ fontSize: 10, color: "#334155", marginTop: 2 }}>{subtitle}</div>}
+      </div>
+      {children}
+    </div>
+  );
+});
 
 /* ============================================================
-   MAIN PAGE
+   A) MULTI-LINE TREND
 ============================================================ */
-export default function HistoryPage() {
-  const [animeReady, setAnimeReady] = useState(false);
-  useAnimeJS(() => setAnimeReady(true));
+const MultiLineTrend = memo(({ stats }: { stats: GlobalStats }) => {
+  const W = 520, H = 160, PAD = 28;
+  const phRef   = useRef<SVGPolylineElement>(null);
+  const tdsRef  = useRef<SVGPolylineElement>(null);
+  const turbRef = useRef<SVGPolylineElement>(null);
 
-  /* ── Data is pre-seeded at module load — just read it ── */
-  const [rawIterations, setRawIterations] = useState<Iteration[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("waterIQ_iterations") || "[]") as Iteration[];
-    } catch { return []; }
-  });
-  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
-  const clock  = useClock();
-  const uptime = useUptime();
+  const { phPts, tdsPts, turbPts } = useMemo(() => {
+    const phn  = norm(stats.phOverTime.map((d) => d.ph));
+    const tdsn = norm(stats.tdsOverTime.map((d) => d.tds));
+    const tn   = norm(stats.turbOverTime.map((d) => d.turb));
+    return {
+      phPts:   toPoints(phn,  W, H, PAD),
+      tdsPts:  toPoints(tdsn, W, H, PAD),
+      turbPts: toPoints(tn,   W, H, PAD),
+    };
+  }, [stats]);
 
-  /* ── Normalise all iterations ── */
-  const allNorm = useMemo(() => rawIterations.map(normalise), [rawIterations]);
-
-  /* ── Global stats (unfiltered) ── */
-  const globalStats = useMemo(() => computeGlobalStats(allNorm), [allNorm]);
-
-  /* ── Filtered + sorted ── */
-  const filtered = useMemo(() => applyFilters(allNorm, filters), [allNorm, filters]);
-
-  /* ── Filtered stats (for charts) ── */
-  const filteredStats = useMemo(() => computeGlobalStats(filtered), [filtered]);
-
-  /* ── Confidence estimator ── */
-  const confidence = useMemo(() => {
-    if (!allNorm.length) return 0;
-    const stab = globalStats.stabilityScore;
-    const size = Math.min(allNorm.length / 20, 1); // more data = higher confidence
-    return Math.round(stab * 0.6 + size * 100 * 0.4);
-  }, [globalStats.stabilityScore, allNorm.length]);
-
-  /* ── Filter patch helper ── */
-  const patchFilter = useCallback((patch: Partial<FilterState>) => {
-    setFilters((prev) => ({ ...prev, ...patch }));
-  }, []);
-
-  /* ── Animated scan-line on background ── */
-  const scanRef = useRef<HTMLDivElement>(null);
+  /* animate stroke-dashoffset draw */
   useEffect(() => {
-    if (!animeReady || !scanRef.current) return;
+    if (typeof (window as any).anime === "undefined") return;
     const a = (window as any).anime;
-    a({
-      targets: scanRef.current,
-      translateY: ["-100%", "100vh"],
-      duration: 6000,
-      easing: "linear",
-      loop: true,
+    [phRef, tdsRef, turbRef].forEach((r, i) => {
+      if (!r.current) return;
+      const len = r.current.getTotalLength?.() ?? 400;
+      r.current.style.strokeDasharray  = `${len}`;
+      r.current.style.strokeDashoffset = `${len}`;
+      a({
+        targets: r.current,
+        strokeDashoffset: [len, 0],
+        duration: 900,
+        delay: i * 180,
+        easing: "easeInOutQuad",
+      });
     });
-  }, [animeReady]);
+  }, [phPts]);
 
-  /* ── Page mount entrance ── */
-  const pageRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!animeReady || !pageRef.current) return;
-    (window as any).anime({
-      targets: pageRef.current,
-      opacity: [0.9, 1],
-      duration: 500,
-      easing: "easeOutExpo",
-    });
-  }, [animeReady]);
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((v) =>
+    PAD + (1 - v) * (H - PAD * 2)
+  );
 
-  /* ============================================================
-     RENDER
-  ============================================================ */
   return (
-    <>
-      {/* ── Global CSS ── */}
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&display=swap');
+    <ChartCard title="Sensor Trend — pH / TDS / Turbidity" subtitle="Normalised 0–1 per metric">
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ overflow: "visible" }}>
+        {/* grid */}
+        {gridLines.map((y, i) => (
+          <line key={i} x1={PAD} y1={y} x2={W - PAD} y2={y} stroke={GRID_COLOR} strokeWidth="1" />
+        ))}
+        {/* lines */}
+        <polyline ref={phRef}   points={phPts}   fill="none" stroke="#22c55e" strokeWidth="1.8" />
+        <polyline ref={tdsRef}  points={tdsPts}  fill="none" stroke="#fbbf24" strokeWidth="1.8" />
+        <polyline ref={turbRef} points={turbPts} fill="none" stroke="#38bdf8" strokeWidth="1.8" />
+        {/* legend */}
+        {[["#22c55e","pH"],["#fbbf24","TDS"],["#38bdf8","Turbidity"]].map(([c, l], i) => (
+          <g key={l} transform={`translate(${PAD + i * 80}, ${H - 6})`}>
+            <rect x="0" y="-7" width="10" height="3" fill={c} rx="1" />
+            <text x="14" y="0" fill={LABEL_COLOR} fontSize="9" fontFamily="monospace">{l}</text>
+          </g>
+        ))}
+      </svg>
+    </ChartCard>
+  );
+});
 
-        * { box-sizing: border-box; }
+/* ============================================================
+   B) BRACKET DISTRIBUTION PIE
+============================================================ */
+const BracketPie = memo(({ dist }: { dist: Record<string, number> }) => {
+  const SIZE = 130, CX = SIZE / 2, CY = SIZE / 2, R = 50;
+  const pathRefs = useRef<(SVGPathElement | null)[]>([]);
 
-        :root {
-          --bg-deep:   #020910;
-          --bg-card:   #040b16;
-          --border:    #0f2236;
-          --green:     #22c55e;
-          --blue:      #38bdf8;
-          --amber:     #fbbf24;
-          --orange:    #f97316;
-          --red:       #ef4444;
-          --text:      #94a3b8;
-          --text-dim:  #334155;
-        }
+  const slices = useMemo(() => {
+    const entries = Object.entries(dist).filter(([, v]) => v > 0);
+    const total   = entries.reduce((s, [, v]) => s + v, 0);
+    let angle     = -Math.PI / 2;
+    return entries.map(([bracket, count]) => {
+      const sweep = (count / total) * 2 * Math.PI;
+      const x1 = CX + R * Math.cos(angle);
+      const y1 = CY + R * Math.sin(angle);
+      angle += sweep;
+      const x2 = CX + R * Math.cos(angle);
+      const y2 = CY + R * Math.sin(angle);
+      const large = sweep > Math.PI ? 1 : 0;
+      return {
+        bracket, count,
+        d: `M${CX},${CY} L${x1},${y1} A${R},${R} 0 ${large},1 ${x2},${y2} Z`,
+        color: BRACKET_COLOR[bracket] ?? "#475569",
+        midAngle: angle - sweep / 2,
+        pct: Math.round((count / total) * 100),
+      };
+    });
+  }, [dist]);
 
-        body, #root {
-          background: var(--bg-deep) !important;
-          font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
-        }
+  /* animate: scale from 0 per-path */
+  useEffect(() => {
+    if (typeof (window as any).anime === "undefined") return;
+    const a = (window as any).anime;
+    pathRefs.current.forEach((el, i) => {
+      if (!el) return;
+      el.style.transformOrigin = `${CX}px ${CY}px`;
+      el.style.transform = "scale(0)";
+      el.style.opacity = "0";
+      a({ targets: el, scale: [0, 1], opacity: [0.9, 1], delay: i * 120, duration: 480, easing: "easeOutExpo" });
+    });
+  }, [slices.length]); // eslint-disable-line
 
-        ::-webkit-scrollbar       { width: 5px; height: 5px; }
-        ::-webkit-scrollbar-track { background: #020910; }
-        ::-webkit-scrollbar-thumb { background: #0f2236; border-radius: 3px; }
-
-        /* Mobile responsive */
-        @media (max-width: 768px) {
-          .history-header { flex-direction: column !important; gap: 10px !important; padding: 10px 14px !important; }
-          .history-body   { flex-direction: column !important; padding: 12px 14px !important; }
-          .history-filter { width: 100% !important; position: static !important; }
-          .history-kpis   { flex-wrap: wrap !important; }
-          .history-kpi-card { flex: 1 1 120px !important; }
-        }
-
-        /* scan-line overlay */
-        .scan-line {
-          position: fixed; left: 0; width: 100%;
-          height: 2px;
-          background: linear-gradient(90deg, transparent, #38bdf811, transparent);
-          pointer-events: none; z-index: 9998;
-        }
-
-        /* grid texture overlay */
-        .grid-bg::before {
-          content: '';
-          position: fixed; inset: 0;
-          background-image:
-            linear-gradient(#0d1f3511 1px, transparent 1px),
-            linear-gradient(90deg, #0d1f3511 1px, transparent 1px);
-          background-size: 32px 32px;
-          pointer-events: none;
-          z-index: 0;
-        }
-      `}</style>
-
-      {/* scan line */}
-      <div ref={scanRef} className="scan-line" />
-
-      {/* Page wrapper */}
-      <div
-        ref={pageRef}
-        className="grid-bg"
-        style={{
-          minHeight: "100vh",
-          background: "var(--bg-deep)",
-          padding: "0 0 60px",
-          position: "relative",
-          zIndex: 1,
-          opacity: 1,
-        }}
-      >
-
-        {/* ═══════════════════════════════════════
-            HEADER BAR
-        ═══════════════════════════════════════ */}
-        <div className="history-header" style={{
-          background: "#030b17",
-          borderBottom: "1px solid #0f2236",
-          padding: "12px 28px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          position: "sticky",
-          top: 0,
-          zIndex: 10,
-        }}>
-          {/* Left — system ID */}
-          <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "#22c55e", letterSpacing: "0.18em" }}>
-                WATERIQ · ADMIN ANALYTICS
-              </div>
-              <div style={{ fontSize: 9, color: "#1e3a5f", letterSpacing: "0.12em", marginTop: 2 }}>
-                SCADA CONTROL SYSTEM v2.1 · READ-ONLY
-              </div>
-            </div>
-
-            {/* Confidence indicator */}
-            <div style={{
-              padding: "4px 12px", borderRadius: 6,
-              background: "#040b16", border: "1px solid #0f2236",
-            }}>
-              <div style={{ fontSize: 8, color: "#1e3a5f", letterSpacing: "0.12em", marginBottom: 2, textTransform: "uppercase" }}>
-                Pred. Confidence
-              </div>
-              <div style={{
-                fontSize: 14, fontWeight: 800,
-                color: confidence >= 70 ? "#22c55e" : confidence >= 40 ? "#fbbf24" : "#ef4444",
-              }}>
-                {confidence}%
-              </div>
-            </div>
-          </div>
-
-          {/* Right — clock + uptime */}
-          <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 16, fontWeight: 800, color: "#38bdf8", letterSpacing: "0.04em" }}>
-                {clock.toLocaleTimeString()}
-              </div>
-              <div style={{ fontSize: 9, color: "#1e3a5f", letterSpacing: "0.1em" }}>
-                {clock.toLocaleDateString()}
-              </div>
-            </div>
-            <div style={{
-              padding: "4px 12px", borderRadius: 6,
-              background: "#040b16", border: "1px solid #0f2236",
-            }}>
-              <div style={{ fontSize: 8, color: "#1e3a5f", letterSpacing: "0.12em", marginBottom: 2, textTransform: "uppercase" }}>
-                Session Uptime
-              </div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: "#22c55e" }}>{uptime}</div>
-            </div>
-          
-            {/* Time range selector */}
-            <div style={{ display: "flex", gap: 4 }}>
-              {(["1hr","24hr","7days"] as const).map(r => (
-                <button key={r} onClick={() => {
-                  const ms = r === "1hr" ? 3600000 : r === "24hr" ? 86400000 : 604800000;
-                  const from = new Date(Date.now() - ms).toISOString().slice(0,16);
-                  patchFilter({ dateFrom: from, dateTo: "" });
-                }} style={{
-                  padding: "4px 10px", border: "1px solid #0f2236", borderRadius: 5, cursor: "pointer",
-                  background: "#040b16", color: "#38bdf8",
-                  fontFamily: "inherit", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
-                }}>
-                  {r.toUpperCase()}
-                </button>
-              ))}
-              <button onClick={() => patchFilter({ dateFrom: "", dateTo: "" })} style={{
-                padding: "4px 10px", border: "1px solid #0f2236", borderRadius: 5, cursor: "pointer",
-                background: "#040b16", color: "#64748b",
-                fontFamily: "inherit", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
-              }}>ALL</button>
-            </div>
-</div>
-        </div>
-
-        {/* ═══════════════════════════════════════
-            MAIN CONTENT
-        ═══════════════════════════════════════ */}
-        <div style={{ padding: "24px 28px" }}>
-
-          {/* ── Analytics Summary KPIs ── */}
-          <AnalyticsSummary stats={globalStats} />
-
-          {/* ── Status bar ── */}
-          <div style={{
-            padding: "8px 14px", borderRadius: 8,
-            background: "#030a12", border: "1px solid #0a1e30",
-            display: "flex", gap: 24, alignItems: "center",
-            marginBottom: 20, flexWrap: "wrap",
-          }}>
-            {[
-              { label: "DATA SOURCE",  value: "localStorage · waterIQ_iterations", color: "#38bdf8" },
-              { label: "INDEX",        value: `${allNorm.length} sessions · ${globalStats.totalReadings.toLocaleString()} readings`, color: "#22c55e" },
-              { label: "FILTER RESULT",value: `${filtered.length} sessions`, color: "#fbbf24" },
-              { label: "BACKEND",      value: "READ-ONLY", color: "#ef4444" },
-            ].map(({ label, value, color }) => (
-              <div key={label} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 8, color: "#1e3a5f", letterSpacing: "0.1em" }}>{label}</span>
-                <span style={{ fontSize: 10, color, fontWeight: 700 }}>{value}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* ── Body: [FilterPanel | ChartsGrid] ── */}
-          <div className="history-body" style={{ display: "flex", gap: 20, alignItems: "flex-start", marginBottom: 24 }}>
-
-            {/* Filter Panel */}
-            <div className="history-filter"><FilterPanel
-              filters={filters}
-              onChange={patchFilter}
-              onReset={() => setFilters(DEFAULT_FILTERS)}
-              resultCount={filtered.length}
-            /></div>
-
-            {/* Charts */}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              {filtered.length === 0 ? (
-                <div style={{
-                  background: "#040b16", border: "1px solid #0f2236",
-                  borderRadius: 14, padding: "60px 40px",
-                  textAlign: "center", color: "#1e3a5f",
-                  fontSize: 13, letterSpacing: "0.1em",
-                }}>
-                  NO DATA MATCHES ACTIVE FILTERS
-                </div>
-              ) : (
-                <ChartsGrid stats={filteredStats} items={filtered} />
-              )}
-            </div>
-          </div>
-
-          {/* ── Data Explorer ── */}
-          <div style={{ marginBottom: 4 }}>
-            <div style={{
-              marginBottom: 12, display: "flex", alignItems: "center",
-              gap: 12,
-            }}>
-              <div style={{
-                width: 3, height: 18, borderRadius: 2,
-                background: "linear-gradient(180deg,#22c55e,#38bdf8)",
-              }} />
-              <span style={{
-                fontSize: 10, fontWeight: 800, letterSpacing: "0.16em",
-                color: "#22c55e", textTransform: "uppercase",
-              }}>
-                Session Data Explorer
+  return (
+    <ChartCard title="Bracket Distribution" subtitle="All sessions">
+      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <svg viewBox={`0 0 ${SIZE} ${SIZE}`} width={SIZE} height={SIZE}>
+          {slices.map((s, i) => (
+            <path
+              key={s.bracket}
+              ref={(el) => { pathRefs.current[i] = el; }}
+              d={s.d}
+              fill={s.color}
+              opacity={0.85}
+            />
+          ))}
+          {/* donut hole */}
+          <circle cx={CX} cy={CY} r={R * 0.45} fill={CHART_BG} />
+        </svg>
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          {slices.map((s) => (
+            <div key={s.bracket} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ width: 8, height: 8, borderRadius: 2, background: s.color, flexShrink: 0 }} />
+              <span style={{ fontSize: 10, color: s.color, fontWeight: 700, fontFamily: "monospace" }}>
+                {s.bracket}
               </span>
-              <span style={{ fontSize: 10, color: "#1e3a5f" }}>
-                Expand rows for raw readings, sparklines, and prediction details
+              <span style={{ fontSize: 10, color: "#475569" }}>
+                {s.count}× ({s.pct}%)
               </span>
             </div>
-            <DataExplorer items={filtered} />
-          </div>
-
+          ))}
         </div>
       </div>
-    </>
+    </ChartCard>
   );
-}
+});
+
+/* ============================================================
+   C) TANK ROUTING BAR CHART
+============================================================ */
+const TankBar = memo(({ dist }: { dist: Record<string, number> }) => {
+  const barRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const total   = Object.values(dist).reduce((s, v) => s + v, 0) || 1;
+  const entries = Object.entries(dist);
+
+  useEffect(() => {
+    if (typeof (window as any).anime === "undefined") return;
+    const a = (window as any).anime;
+    barRefs.current.forEach((el, i) => {
+      if (!el) return;
+      const target = (dist[entries[i]?.[0]] ?? 0) / total * 100;
+      el.style.width = "0%";
+      a({ targets: el, width: `${target}%`, delay: i * 150, duration: 700, easing: "easeOutExpo" });
+    });
+  }, [total]); // eslint-disable-line
+
+  const COLORS: Record<string, string> = { A: "#22c55e", B: "#38bdf8" };
+
+  return (
+    <ChartCard title="Tank Routing Breakdown" subtitle="Sessions per tank">
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingTop: 4 }}>
+        {entries.map(([tank, count], i) => (
+          <div key={tank}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+              <span style={{ fontSize: 11, color: COLORS[tank] ?? "#94a3b8", fontWeight: 700, fontFamily: "monospace" }}>
+                TANK {tank}
+              </span>
+              <span style={{ fontSize: 11, color: "#475569" }}>{count} sessions</span>
+            </div>
+            <div style={{ height: 10, borderRadius: 5, background: "#0d1f35", overflow: "hidden" }}>
+              <div
+                ref={(el) => { barRefs.current[i] = el; }}
+                style={{
+                  height: "100%", width: "0%",
+                  borderRadius: 5,
+                  background: `linear-gradient(90deg, ${COLORS[tank] ?? "#818cf8"}, ${COLORS[tank] ?? "#818cf8"}88)`,
+                }}
+              />
+            </div>
+          </div>
+        ))}
+        {!entries.length && (
+          <div style={{ color: "#334155", fontSize: 12, textAlign: "center", padding: "20px 0" }}>No data</div>
+        )}
+      </div>
+    </ChartCard>
+  );
+});
+
+/* ============================================================
+   D) ANOMALY FREQUENCY HEATMAP
+   Buckets sessions by hour-of-day (0–23), counts anomalies.
+============================================================ */
+const AnomalyHeatmap = memo(({ items }: { items: NormIteration[] }) => {
+  const cellRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  const buckets = useMemo(() => {
+    const b = new Array(24).fill(0);
+    items.forEach((it) => {
+      const h = new Date(it.timestamp).getHours();
+      b[h] += it.anomalyCount;
+    });
+    return b;
+  }, [items]);
+
+  const maxVal = Math.max(...buckets, 1);
+
+  useEffect(() => {
+    if (typeof (window as any).anime === "undefined") return;
+    const a = (window as any).anime;
+    a({
+      targets: cellRefs.current.filter(Boolean),
+      opacity: [0.9, 1],
+      scale: [0.6, 1],
+      delay: a.stagger(18),
+      duration: 350,
+      easing: "easeOutExpo",
+    });
+  }, [buckets[0]]); // eslint-disable-line
+
+  return (
+    <ChartCard title="Anomaly Frequency" subtitle="By hour of day (24 h clock)">
+      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+        {buckets.map((v, h) => {
+          const intensity = v / maxVal;
+          const bg = v === 0 ? "#0d1f35"
+            : `rgba(239,68,68,${0.15 + intensity * 0.7})`;
+          return (
+            <div
+              key={h}
+              ref={(el) => { cellRefs.current[h] = el; }}
+              title={`${String(h).padStart(2, "0")}:00 — ${v} anomalies`}
+              style={{
+                width: 18, height: 22, borderRadius: 3,
+                background: bg, cursor: "default",
+                display: "flex", alignItems: "flex-end", justifyContent: "center",
+                paddingBottom: 2,
+                opacity: 1,
+              }}
+            >
+              <span style={{ fontSize: 7, color: v > 0 ? "#fca5a5" : "#1e3a5f", lineHeight: 1 }}>
+                {String(h).padStart(2, "0")}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+        <div style={{ width: 12, height: 12, borderRadius: 2, background: "#0d1f35" }} />
+        <span style={{ fontSize: 9, color: "#334155" }}>None</span>
+        <div style={{ width: 12, height: 12, borderRadius: 2, background: "rgba(239,68,68,0.8)" }} />
+        <span style={{ fontSize: 9, color: "#334155" }}>High</span>
+      </div>
+    </ChartCard>
+  );
+});
+
+/* ============================================================
+   E) WQI TREND LINE
+============================================================ */
+const WQITrend = memo(({ stats }: { stats: GlobalStats }) => {
+  const W = 520, H = 110, PAD = 24;
+  const lineRef = useRef<SVGPolylineElement>(null);
+  const fillRef = useRef<SVGPolygonElement>(null);
+
+  const { pts, fillPts, colors } = useMemo(() => {
+    const vals   = stats.wqiOverTime.map((d) => d.wqi);
+    const normed = norm(vals.length ? vals : [50]);
+    const p      = toPoints(normed, W, H, PAD);
+    // build fill polygon (close at bottom)
+    const points = normed.map((v, i) => {
+      const x = PAD + i * ((W - PAD * 2) / Math.max(normed.length - 1, 1));
+      const y = PAD + (1 - v) * (H - PAD * 2);
+      return `${x},${y}`;
+    });
+    const first = `${PAD},${H - PAD}`;
+    const last  = `${PAD + (normed.length - 1) * ((W - PAD * 2) / Math.max(normed.length - 1, 1))},${H - PAD}`;
+    const fp    = `${first} ${points.join(" ")} ${last}`;
+    const dotColors = vals.map((v) => wqiColor(v));
+    return { pts: p, fillPts: fp, colors: dotColors };
+  }, [stats.wqiOverTime]);
+
+  useEffect(() => {
+    if (!lineRef.current || typeof (window as any).anime === "undefined") return;
+    const a   = (window as any).anime;
+    const len = lineRef.current.getTotalLength?.() ?? 300;
+    lineRef.current.style.strokeDasharray  = `${len}`;
+    lineRef.current.style.strokeDashoffset = `${len}`;
+    a({ targets: lineRef.current, strokeDashoffset: [len, 0], duration: 950, easing: "easeInOutQuad" });
+    if (fillRef.current) {
+      a({ targets: fillRef.current, opacity: [0, 0.12], duration: 800, easing: "easeOutQuad", delay: 200 });
+    }
+  }, [pts]);
+
+  const avgWQI = stats.avgWQI;
+  const avgColor = wqiColor(avgWQI);
+
+  return (
+    <ChartCard title="WQI Over Time" subtitle="Water Quality Index per session">
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
+        <div style={{
+          fontSize: 28, fontWeight: 800, color: avgColor,
+          fontFamily: "'JetBrains Mono', monospace",
+        }}>{avgWQI}</div>
+        <div>
+          <div style={{ fontSize: 10, color: "#334155", textTransform: "uppercase", letterSpacing: "0.1em" }}>Avg WQI</div>
+          <div style={{ fontSize: 11, color: avgColor, fontWeight: 700 }}>{
+            avgWQI >= 80 ? "Excellent" : avgWQI >= 60 ? "Good" : avgWQI >= 40 ? "Fair" : "Poor"
+          }</div>
+        </div>
+      </div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`}>
+        {/* grid */}
+        {[0, 0.5, 1].map((v, i) => (
+          <line key={i} x1={PAD} y1={PAD + (1 - v) * (H - PAD * 2)}
+            x2={W - PAD} y2={PAD + (1 - v) * (H - PAD * 2)}
+            stroke={GRID_COLOR} strokeWidth="1" />
+        ))}
+        {/* fill */}
+        <polygon ref={fillRef} points={fillPts} fill={avgColor} opacity={0} />
+        {/* line */}
+        <polyline ref={lineRef} points={pts} fill="none" stroke={avgColor} strokeWidth="2" />
+      </svg>
+    </ChartCard>
+  );
+});
+
+/* ============================================================
+   CHARTS GRID — assembles all 5
+============================================================ */
+export const ChartsGrid = memo(({
+  stats, items,
+}: { stats: GlobalStats; items: NormIteration[] }) => (
+  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <WQITrend stats={stats} />
+    <MultiLineTrend stats={stats} />
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <BracketPie dist={stats.bracketDist} />
+      <TankBar    dist={stats.tankDist} />
+    </div>
+    <AnomalyHeatmap items={items} />
+  </div>
+));
